@@ -10,41 +10,60 @@ agent:
   type: claude-code
   timeout: 30m
 concurrency:
-  max_agents: 2
+  max_agents: 1
+skills: [gsd, get-shit-done]
 validation:
   steps:
-    - name: build
-      command: "xcodebuild -scheme Outspoken -destination 'platform=macOS' build 2>&1 | tail -20 || true"
+    - name: cargo-check
+      command: "cd src-tauri && cargo check 2>&1 | tail -30 || true"
       retries: 2
-      description: "Verify Xcode project builds"
+      description: "Verify Rust code compiles"
+    - name: frontend-build
+      command: "npm run build 2>&1 | tail -20 || true"
+      retries: 1
+      description: "Verify React frontend builds"
   on_failure: output-wip
 ---
-You are an autonomous coding agent building **Outspoken**, a free self-hosted AI dictation app for macOS and iOS.
+You are an autonomous coding agent building **Outspoken**, a cross-platform AI dictation app.
 
 ## Issue: {{issue.title}}
 
 {{issue.description}}
 
 ## Tech Stack
-- **Language:** Swift 5.9+
-- **UI:** SwiftUI
-- **Platforms:** macOS 14.0+ (menu bar app), iOS 17.0+ (keyboard extension)
-- **Speech-to-text:** whisper.cpp (C library with Swift wrapper)
-- **Storage:** SwiftData
-- **Build:** Xcode 15+, Swift Package Manager
+- **Desktop framework:** Tauri v2 (Rust backend + web frontend)
+- **Backend:** Rust (audio capture via cpal, transcription via whisper-rs)
+- **Frontend:** React + TypeScript + Vite
+- **Speech-to-text:** whisper-rs (Rust bindings for whisper.cpp)
+- **Storage:** SQLite via rusqlite
+- **Build:** cargo (Rust) + npm (frontend) + Tauri CLI
 
-## Architecture
-- `OutspokenCore/` — shared Swift package (audio, transcription, models, processing)
-- `Outspoken/` — macOS app target (menu bar, SwiftUI)
-- `OutspokenMobile/` — iOS app target
-- `OutspokenKeyboard/` — iOS keyboard extension target
+## Project Structure
+```
+outspoken/
+├── src-tauri/           # Rust backend
+│   ├── src/
+│   │   ├── main.rs      # Tauri app entry
+│   │   ├── audio.rs     # Microphone capture (cpal)
+│   │   ├── transcription.rs  # Whisper service
+│   │   ├── models.rs    # Model download/management
+│   │   └── lib.rs       # Tauri commands
+│   ├── Cargo.toml
+│   └── tauri.conf.json
+├── src/                 # React frontend
+│   ├── App.tsx
+│   ├── components/
+│   └── main.tsx
+├── package.json
+└── Dockerfile
+```
 
 ## Instructions
 1. Read existing source files to understand what's already built before making changes.
-2. Follow Swift conventions: protocols for abstraction, async/await for concurrency, actors for thread safety.
-3. Put shared logic in `OutspokenCore/` package — platform-specific code in app targets.
-4. Use SwiftUI for all UI. Use `@Observable` (not ObservableObject) for state.
-5. For whisper.cpp integration, use the C API directly via a Swift bridging header.
+2. Follow Rust conventions: use Result for errors, async with tokio, traits for abstraction.
+3. Tauri commands go in `src-tauri/src/lib.rs` or dedicated modules, exposed via `#[tauri::command]`.
+4. React frontend communicates with Rust via `@tauri-apps/api/core` invoke calls.
+5. Use `tokio::task::spawn_blocking` for CPU-heavy work (whisper transcription).
 6. Write minimal, focused code. Don't over-abstract.
-7. If creating the initial project structure, use proper Xcode project layout with Package.swift for the shared package.
-8. Commit your changes with clear messages describing what was built.
+7. Commit your changes with clear messages describing what was built.
+8. If this is the first issue (#60), scaffold the full Tauri v2 project with `cargo create-tauri-app`.
