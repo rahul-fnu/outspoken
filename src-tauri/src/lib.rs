@@ -10,7 +10,7 @@ use std::sync::Arc;
 use audio_level::{AudioLevelMonitor, SilenceConfig};
 use models::{CancellationMap, ProgressMap};
 use tokio::sync::Mutex;
-use transcription::{TranscriptionConfig, TranscriptionResult, TranscriptionService};
+use transcription::{SupportedLanguage, TranscriptionConfig, TranscriptionResult, TranscriptionService};
 
 type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
 type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
@@ -205,6 +205,11 @@ async fn load_transcription_model(
 }
 
 #[tauri::command]
+fn list_supported_languages() -> Vec<SupportedLanguage> {
+    transcription::supported_languages()
+}
+
+#[tauri::command]
 async fn transcribe_recording(
     audio_data: Vec<f32>,
     service_state: tauri::State<'_, TranscriptionServiceState>,
@@ -260,6 +265,7 @@ pub fn run() {
             set_silence_config,
             load_transcription_model,
             transcribe_recording,
+            list_supported_languages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

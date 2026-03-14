@@ -25,6 +25,11 @@ interface DownloadProgress {
   status: "Downloading" | "Completed" | "Cancelled" | "Failed";
 }
 
+interface SupportedLanguage {
+  code: string;
+  name: string;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(0)} MB`;
@@ -36,6 +41,21 @@ function App() {
   const [downloadedModels, setDownloadedModels] = useState<DownloadedModel[]>([]);
   const [downloading, setDownloading] = useState<Record<string, DownloadProgress>>({});
   const [error, setError] = useState<string | null>(null);
+  const [languages, setLanguages] = useState<SupportedLanguage[]>([]);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("auto");
+
+  const loadLanguages = useCallback(async () => {
+    try {
+      const langs = await invoke<SupportedLanguage[]>("list_supported_languages");
+      setLanguages(langs);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLanguages();
+  }, [loadLanguages]);
 
   const loadModels = useCallback(async () => {
     try {
@@ -135,6 +155,27 @@ function App() {
       {error && (
         <div style={{ color: "red", marginBottom: "1rem" }}>{error}</div>
       )}
+
+      <h2>Language</h2>
+      <div style={{ marginBottom: "1.5rem" }}>
+        <select
+          value={selectedLanguage}
+          onChange={(e) => setSelectedLanguage(e.target.value)}
+          style={{ padding: "0.4rem", fontSize: "1rem", minWidth: 200 }}
+        >
+          <option value="auto">Auto-detect</option>
+          {languages.map((lang) => (
+            <option key={lang.code} value={lang.code}>
+              {lang.name} ({lang.code})
+            </option>
+          ))}
+        </select>
+        <div style={{ fontSize: "0.85rem", color: "#666", marginTop: 4 }}>
+          {selectedLanguage === "auto"
+            ? "Whisper will automatically detect the spoken language."
+            : `Manual selection: ${selectedLanguage}`}
+        </div>
+      </div>
 
       <h2>Whisper Models</h2>
 

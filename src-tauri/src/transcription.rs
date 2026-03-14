@@ -129,7 +129,12 @@ impl TranscriptionService {
             segments.retain(|s| !s.text.is_empty());
         }
 
-        let detected_language = self.config.language.clone().unwrap_or_else(|| "auto".into());
+        let detected_language = state
+            .full_lang_id_from_state()
+            .ok()
+            .and_then(|id| whisper_rs::standalone::get_lang_str(id).map(|s| s.to_string()))
+            .or_else(|| self.config.language.clone())
+            .unwrap_or_else(|| "unknown".into());
         let duration_ms = start.elapsed().as_millis() as u64;
 
         Ok(TranscriptionResult {
@@ -139,6 +144,30 @@ impl TranscriptionService {
             duration_ms,
         })
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupportedLanguage {
+    pub code: String,
+    pub name: String,
+}
+
+/// Returns the list of languages supported by Whisper, queried from whisper.cpp.
+pub fn supported_languages() -> Vec<SupportedLanguage> {
+    let max_id = whisper_rs::standalone::get_lang_max_id();
+    let mut languages = Vec::new();
+    for id in 0..=max_id {
+        if let (Some(code), Some(name)) = (
+            whisper_rs::standalone::get_lang_str(id),
+            whisper_rs::standalone::get_lang_str_full(id),
+        ) {
+            languages.push(SupportedLanguage {
+                code: code.to_string(),
+                name: name.to_string(),
+            });
+        }
+    }
+    languages
 }
 
 /// Remove common filler words using simple regex-based replacement.
