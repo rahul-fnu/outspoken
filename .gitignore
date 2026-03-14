@@ -73,3 +73,9 @@ build/
 *.log
 .env
 .env.*
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.*

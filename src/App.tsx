@@ -43,6 +43,37 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [languages, setLanguages] = useState<SupportedLanguage[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("auto");
+  const [hotkey, setHotkey] = useState<string>("");
+  const [hotkeyInput, setHotkeyInput] = useState<string>("");
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null);
+  const [hotkeySuccess, setHotkeySuccess] = useState<string | null>(null);
+
+  const loadHotkey = useCallback(async () => {
+    try {
+      const current = await invoke<string>("get_hotkey");
+      setHotkey(current);
+      setHotkeyInput(current);
+    } catch (e) {
+      setHotkeyError(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHotkey();
+  }, [loadHotkey]);
+
+  async function handleSetHotkey() {
+    setHotkeyError(null);
+    setHotkeySuccess(null);
+    try {
+      await invoke("set_hotkey", { shortcut: hotkeyInput });
+      setHotkey(hotkeyInput);
+      setHotkeySuccess("Hotkey updated successfully");
+      setTimeout(() => setHotkeySuccess(null), 3000);
+    } catch (e) {
+      setHotkeyError(String(e));
+    }
+  }
 
   const loadLanguages = useCallback(async () => {
     try {
@@ -175,6 +206,38 @@ function App() {
             ? "Whisper will automatically detect the spoken language."
             : `Manual selection: ${selectedLanguage}`}
         </div>
+      </div>
+
+      <h2>Global Hotkey</h2>
+      <div style={{ marginBottom: "1.5rem" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="text"
+            value={hotkeyInput}
+            onChange={(e) => setHotkeyInput(e.target.value)}
+            placeholder="e.g. Ctrl+Shift+Space"
+            style={{ padding: "0.4rem", fontSize: "1rem", minWidth: 200 }}
+          />
+          <button
+            onClick={handleSetHotkey}
+            disabled={hotkeyInput === hotkey}
+          >
+            Apply
+          </button>
+        </div>
+        <div style={{ fontSize: "0.85rem", color: "#666", marginTop: 4 }}>
+          Current: <strong>{hotkey || "None"}</strong> — toggles dictation from any app
+        </div>
+        {hotkeyError && (
+          <div style={{ fontSize: "0.85rem", color: "red", marginTop: 4 }}>
+            {hotkeyError}
+          </div>
+        )}
+        {hotkeySuccess && (
+          <div style={{ fontSize: "0.85rem", color: "green", marginTop: 4 }}>
+            {hotkeySuccess}
+          </div>
+        )}
       </div>
 
       <h2>Whisper Models</h2>
