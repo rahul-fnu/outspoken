@@ -6,6 +6,9 @@ use cpal::{Device, SampleFormat, StreamConfig};
 use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, Resampler, WindowFunction};
 use serde::{Deserialize, Serialize};
 
+/// Callback type for receiving processed mono samples (used for audio level monitoring).
+pub type SampleCallback = Arc<dyn Fn(&[f32]) + Send + Sync>;
+
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const TARGET_CHANNELS: u16 = 1;
 
@@ -67,7 +70,12 @@ pub struct RecordingState {
 
 /// Start capturing audio from the specified device (or default).
 /// Returns a `RecordingState` that accumulates 16kHz mono f32 samples.
-pub fn start_capture(device_name: &Option<String>) -> Result<RecordingState, String> {
+/// If `sample_callback` is provided, it will be called with each chunk of
+/// processed mono samples (before resampling) for audio level monitoring.
+pub fn start_capture(
+    device_name: &Option<String>,
+    sample_callback: Option<SampleCallback>,
+) -> Result<RecordingState, String> {
     let device = find_device(device_name)?;
     let supported_config = device
         .default_input_config()
@@ -109,6 +117,7 @@ pub fn start_capture(device_name: &Option<String>) -> Result<RecordingState, Str
     };
 
     let resampler = Arc::new(resampler);
+    let sample_cb = sample_callback.clone();
 
     let data_callback = move |data: &[f32], _: &cpal::InputCallbackInfo| {
         if !recording_flag.load(Ordering::Relaxed) {
@@ -123,6 +132,11 @@ pub fn start_capture(device_name: &Option<String>) -> Result<RecordingState, Str
         } else {
             data.to_vec()
         };
+
+        // Notify level monitor with raw mono samples.
+        if let Some(ref cb) = sample_cb {
+            cb(&mono);
+        }
 
         let samples = if let Some(ref resampler_mutex) = *resampler {
             if let Ok(mut resampler) = resampler_mutex.lock() {
@@ -170,6 +184,7 @@ pub fn start_capture(device_name: &Option<String>) -> Result<RecordingState, Str
         SampleFormat::I16 => {
             let buf_clone = Arc::clone(&buffer);
             let recording_flag = Arc::clone(&is_recording);
+            let sample_cb_i16 = sample_callback;
             let needs_resample = sample_rate != TARGET_SAMPLE_RATE;
             let resampler_i16: Option<Mutex<SincFixedIn<f32>>> = if needs_resample {
                 let params = SincInterpolationParameters {
@@ -211,6 +226,11 @@ pub fn start_capture(device_name: &Option<String>) -> Result<RecordingState, Str
                         } else {
                             float_data
                         };
+
+                        // Notify level monitor with raw mono samples.
+                        if let Some(ref cb) = sample_cb_i16 {
+                            cb(&mono);
+                        }
 
                         let samples = if let Some(ref resampler_mutex) = *resampler_i16 {
                             if let Ok(mut resampler) = resampler_mutex.lock() {

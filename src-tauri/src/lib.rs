@@ -1,15 +1,18 @@
 mod audio;
+mod audio_level;
 mod models;
 mod transcription;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use audio_level::{AudioLevelMonitor, SilenceConfig};
 use models::{CancellationMap, ProgressMap};
 use tokio::sync::Mutex;
 
 type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
 type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
+type SilenceConfigState = Arc<std::sync::Mutex<SilenceConfig>>;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -89,8 +92,10 @@ fn select_audio_device(
 
 #[tauri::command]
 fn start_recording(
+    app_handle: tauri::AppHandle,
     audio_state: tauri::State<'_, AudioState>,
     selected_device: tauri::State<'_, SelectedDevice>,
+    silence_config: tauri::State<'_, SilenceConfigState>,
 ) -> Result<(), String> {
     let mut state = audio_state
         .lock()
@@ -105,7 +110,22 @@ fn start_recording(
         .map_err(|e| format!("Lock error: {e}"))?
         .clone();
 
-    let recording = audio::start_capture(&device_name)?;
+    let config = silence_config
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?
+        .clone();
+
+    // Create level monitor and wrap in a callback for the audio stream.
+    let monitor = Arc::new(std::sync::Mutex::new(AudioLevelMonitor::new(
+        app_handle, config,
+    )));
+    let sample_callback: audio::SampleCallback = Arc::new(move |samples: &[f32]| {
+        if let Ok(mut mon) = monitor.lock() {
+            mon.process_samples(samples);
+        }
+    });
+
+    let recording = audio::start_capture(&device_name, Some(sample_callback))?;
     *state = Some(recording);
     Ok(())
 }
@@ -135,12 +155,28 @@ fn stop_recording(
     Ok(buffer)
 }
 
+#[tauri::command]
+fn set_silence_config(
+    threshold_db: f32,
+    duration_secs: f32,
+    silence_config: tauri::State<'_, SilenceConfigState>,
+) -> Result<(), String> {
+    let mut config = silence_config
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    config.threshold_db = threshold_db;
+    config.duration_secs = duration_secs;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
     let cancellation_map: CancellationMap = Arc::new(Mutex::new(HashMap::new()));
     let audio_state: AudioState = Arc::new(std::sync::Mutex::new(None));
     let selected_device: SelectedDevice = Arc::new(std::sync::Mutex::new(None));
+    let silence_config: SilenceConfigState =
+        Arc::new(std::sync::Mutex::new(SilenceConfig::default()));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -148,6 +184,7 @@ pub fn run() {
         .manage(cancellation_map)
         .manage(audio_state)
         .manage(selected_device)
+        .manage(silence_config)
         .invoke_handler(tauri::generate_handler![
             greet,
             list_available_models,
@@ -160,6 +197,7 @@ pub fn run() {
             select_audio_device,
             start_recording,
             stop_recording,
+            set_silence_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
