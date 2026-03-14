@@ -2,6 +2,7 @@ mod audio;
 mod audio_level;
 mod hotkey;
 mod models;
+mod text_insert;
 mod transcription;
 mod tray;
 
@@ -251,6 +252,16 @@ fn set_tray_state(
 }
 
 #[tauri::command]
+async fn insert_text(text: String) -> Result<(), String> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    tokio::task::spawn_blocking(move || text_insert::insert_text(&text))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
 fn get_hotkey(
     hotkey_config: tauri::State<'_, HotkeyConfigState>,
 ) -> Result<String, String> {
@@ -335,6 +346,7 @@ pub fn run() {
             transcribe_recording,
             list_supported_languages,
             set_tray_state,
+            insert_text,
             get_hotkey,
             set_hotkey,
             unregister_hotkey,
