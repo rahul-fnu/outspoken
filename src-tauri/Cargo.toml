@@ -25,6 +25,8 @@ dirs = "6"
 rusqlite = { version = "0.32", features = ["bundled"] }
 futures-util = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
+cpal = "0.15"
+rubato = "0.16"
 
 [features]
 default = []
