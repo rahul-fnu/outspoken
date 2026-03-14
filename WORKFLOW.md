@@ -2,7 +2,7 @@
 tracker:
   kind: github
   repo: rahul-fnu/outspoken
-  labels: [sub-issue, phase-1]
+  labels: [sub-issue]
   auto_close: true
   in_progress_label: in-progress
   done_label: "forge:done"
