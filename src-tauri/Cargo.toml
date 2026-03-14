@@ -27,6 +27,7 @@ futures-util = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 cpal = "0.15"
 rubato = "0.16"
+regex-lite = "0.1"
 
 [features]
 default = []

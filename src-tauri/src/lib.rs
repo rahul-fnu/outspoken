@@ -4,15 +4,18 @@ mod models;
 mod transcription;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use audio_level::{AudioLevelMonitor, SilenceConfig};
 use models::{CancellationMap, ProgressMap};
 use tokio::sync::Mutex;
+use transcription::{TranscriptionConfig, TranscriptionResult, TranscriptionService};
 
 type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
 type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
 type SilenceConfigState = Arc<std::sync::Mutex<SilenceConfig>>;
+type TranscriptionServiceState = Arc<std::sync::Mutex<Option<TranscriptionService>>>;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -169,6 +172,60 @@ fn set_silence_config(
     Ok(())
 }
 
+#[tauri::command]
+async fn load_transcription_model(
+    model_name: String,
+    config: Option<TranscriptionConfig>,
+    service_state: tauri::State<'_, TranscriptionServiceState>,
+) -> Result<(), String> {
+    // Look up the model path from downloaded models.
+    let downloaded = models::list_downloaded_models()?;
+    let model = downloaded
+        .iter()
+        .find(|m| m.name == model_name)
+        .ok_or_else(|| format!("Model not downloaded: {model_name}"))?;
+
+    let model_path = PathBuf::from(&model.path);
+    if !model_path.exists() {
+        return Err(format!("Model file not found: {}", model.path));
+    }
+
+    let cfg = config.unwrap_or_default();
+    let svc = tokio::task::spawn_blocking(move || {
+        TranscriptionService::new(&model_path, cfg)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))??;
+
+    let mut state = service_state
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    *state = Some(svc);
+    Ok(())
+}
+
+#[tauri::command]
+async fn transcribe_recording(
+    audio_data: Vec<f32>,
+    service_state: tauri::State<'_, TranscriptionServiceState>,
+) -> Result<TranscriptionResult, String> {
+    let service = {
+        let state = service_state
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        state
+            .as_ref()
+            .ok_or("No transcription model loaded. Call load_transcription_model first.")?
+            .clone()
+    };
+
+    let result = tokio::task::spawn_blocking(move || service.transcribe(&audio_data))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))??;
+
+    Ok(result)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -177,6 +234,8 @@ pub fn run() {
     let selected_device: SelectedDevice = Arc::new(std::sync::Mutex::new(None));
     let silence_config: SilenceConfigState =
         Arc::new(std::sync::Mutex::new(SilenceConfig::default()));
+    let transcription_service: TranscriptionServiceState =
+        Arc::new(std::sync::Mutex::new(None));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -185,6 +244,7 @@ pub fn run() {
         .manage(audio_state)
         .manage(selected_device)
         .manage(silence_config)
+        .manage(transcription_service)
         .invoke_handler(tauri::generate_handler![
             greet,
             list_available_models,
@@ -198,6 +258,8 @@ pub fn run() {
             start_recording,
             stop_recording,
             set_silence_config,
+            load_transcription_model,
+            transcribe_recording,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
