@@ -2,6 +2,7 @@ mod audio;
 mod audio_level;
 mod models;
 mod transcription;
+mod tray;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use audio_level::{AudioLevelMonitor, SilenceConfig};
 use models::{CancellationMap, ProgressMap};
 use tokio::sync::Mutex;
 use transcription::{SupportedLanguage, TranscriptionConfig, TranscriptionResult, TranscriptionService};
+use tray::{TrayRecordingState, TrayState};
 
 type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
 type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
@@ -231,6 +233,21 @@ async fn transcribe_recording(
     Ok(result)
 }
 
+#[tauri::command]
+fn set_tray_state(
+    app_handle: tauri::AppHandle,
+    state: String,
+) -> Result<(), String> {
+    let tray_state = match state.as_str() {
+        "idle" => TrayState::Idle,
+        "recording" => TrayState::Recording,
+        "processing" => TrayState::Processing,
+        _ => return Err(format!("Invalid tray state: {state}")),
+    };
+    tray::update_tray_state(&app_handle, tray_state);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -241,6 +258,8 @@ pub fn run() {
         Arc::new(std::sync::Mutex::new(SilenceConfig::default()));
     let transcription_service: TranscriptionServiceState =
         Arc::new(std::sync::Mutex::new(None));
+    let tray_recording_state: TrayRecordingState =
+        Arc::new(std::sync::atomic::AtomicU8::new(TrayState::Idle as u8));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -250,6 +269,11 @@ pub fn run() {
         .manage(selected_device)
         .manage(silence_config)
         .manage(transcription_service)
+        .manage(tray_recording_state)
+        .setup(|app| {
+            tray::setup_tray(app.handle())?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             list_available_models,
@@ -266,6 +290,7 @@ pub fn run() {
             load_transcription_model,
             transcribe_recording,
             list_supported_languages,
+            set_tray_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
