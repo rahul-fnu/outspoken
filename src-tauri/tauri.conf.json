@@ -1,6 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedaybye/tauri/v2/crates/tauri-utils/schema.json",
   "productName": "Outspoken",
+  "mainBinaryName": "outspoken-app",
   "version": "0.1.0",
   "identifier": "com.outspoken.app",
   "build": {
