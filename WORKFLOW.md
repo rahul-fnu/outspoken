@@ -10,7 +10,7 @@ agent:
   type: claude-code
   timeout: 30m
 concurrency:
-  max_agents: 1
+  max_agents: 3
 skills: [gsd, get-shit-done]
 validation:
   steps:
