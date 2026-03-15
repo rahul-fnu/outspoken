@@ -6,11 +6,12 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand::{rngs::OsRng, RngCore};
 use futures_util::StreamExt;
 use reqwest::Client;
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
+
+use crate::db;
 
 // ---------------------------------------------------------------------------
 // Encryption helpers
@@ -70,31 +71,8 @@ fn decrypt_string(encoded: &str) -> Result<String, String> {
 // Database
 // ---------------------------------------------------------------------------
 
-fn ai_db_path() -> Result<PathBuf, String> {
-    let data_dir = dirs::data_dir().ok_or("Could not determine data directory")?;
-    let dir = data_dir.join("outspoken");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {e}"))?;
-    Ok(dir.join("ai.db"))
-}
-
-fn open_ai_db() -> Result<Connection, String> {
-    let path = ai_db_path()?;
-    let conn =
-        Connection::open(&path).map_err(|e| format!("Failed to open AI database: {e}"))?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS api_keys (
-            provider TEXT PRIMARY KEY,
-            encrypted_key TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS custom_prompts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            prompt TEXT NOT NULL,
-            app_pattern TEXT DEFAULT NULL
-        );",
-    )
-    .map_err(|e| format!("Failed to init AI tables: {e}"))?;
-    Ok(conn)
+fn open_ai_db() -> Result<rusqlite::Connection, String> {
+    db::open_db()
 }
 
 // ---------------------------------------------------------------------------

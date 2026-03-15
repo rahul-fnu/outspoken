@@ -1,7 +1,8 @@
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::db;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transcription {
@@ -43,62 +44,8 @@ pub struct HistoryStats {
     pub source_apps: Vec<String>,
 }
 
-fn db_path() -> PathBuf {
-    let data_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("outspoken");
-    std::fs::create_dir_all(&data_dir).ok();
-    data_dir.join("history.db")
-}
-
-fn open_db() -> Result<Connection, String> {
-    let path = db_path();
-    let conn = Connection::open(&path).map_err(|e| format!("Failed to open history db: {e}"))?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS transcriptions (
-            id TEXT PRIMARY KEY,
-            text TEXT NOT NULL,
-            raw_text TEXT NOT NULL,
-            timestamp INTEGER NOT NULL,
-            duration_ms INTEGER,
-            source_app TEXT,
-            language TEXT,
-            model_used TEXT,
-            is_bookmarked INTEGER DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_transcriptions_timestamp ON transcriptions(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_transcriptions_source_app ON transcriptions(source_app);
-        CREATE INDEX IF NOT EXISTS idx_transcriptions_bookmarked ON transcriptions(is_bookmarked);",
-    )
-    .map_err(|e| format!("Failed to create transcriptions table: {e}"))?;
-
-    // Create FTS5 virtual table if it doesn't exist.
-    // We use an external content table pointing to transcriptions.
-    conn.execute_batch(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS transcriptions_fts USING fts5(
-            text,
-            content=transcriptions,
-            content_rowid=rowid
-        );",
-    )
-    .map_err(|e| format!("Failed to create FTS table: {e}"))?;
-
-    // Triggers to keep FTS in sync
-    conn.execute_batch(
-        "CREATE TRIGGER IF NOT EXISTS transcriptions_ai AFTER INSERT ON transcriptions BEGIN
-            INSERT INTO transcriptions_fts(rowid, text) VALUES (new.rowid, new.text);
-        END;
-        CREATE TRIGGER IF NOT EXISTS transcriptions_ad AFTER DELETE ON transcriptions BEGIN
-            INSERT INTO transcriptions_fts(transcriptions_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-        END;
-        CREATE TRIGGER IF NOT EXISTS transcriptions_au AFTER UPDATE ON transcriptions BEGIN
-            INSERT INTO transcriptions_fts(transcriptions_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-            INSERT INTO transcriptions_fts(rowid, text) VALUES (new.rowid, new.text);
-        END;",
-    )
-    .map_err(|e| format!("Failed to create FTS triggers: {e}"))?;
-
-    Ok(conn)
+fn open_db() -> Result<rusqlite::Connection, String> {
+    db::open_db()
 }
 
 fn generate_id() -> String {

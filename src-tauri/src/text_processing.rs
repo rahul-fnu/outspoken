@@ -1,6 +1,7 @@
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+
+use crate::db;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DictionaryEntry {
@@ -10,28 +11,8 @@ pub struct DictionaryEntry {
     pub case_sensitive: bool,
 }
 
-fn db_path() -> PathBuf {
-    let data_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("outspoken");
-    std::fs::create_dir_all(&data_dir).ok();
-    data_dir.join("dictionary.db")
-}
-
-fn open_db() -> Result<Connection, String> {
-    let path = db_path();
-    let conn =
-        Connection::open(&path).map_err(|e| format!("Failed to open dictionary db: {e}"))?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS dictionary (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            from_text TEXT NOT NULL,
-            to_text TEXT NOT NULL,
-            case_sensitive INTEGER NOT NULL DEFAULT 0
-        );",
-    )
-    .map_err(|e| format!("Failed to create dictionary table: {e}"))?;
-    Ok(conn)
+fn open_db() -> Result<rusqlite::Connection, String> {
+    db::open_db()
 }
 
 pub fn add_entry(from_text: &str, to_text: &str, case_sensitive: bool) -> Result<DictionaryEntry, String> {

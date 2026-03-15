@@ -1,6 +1,7 @@
 mod active_app;
 mod ai;
 mod audio;
+mod db;
 mod audio_level;
 mod audio_preprocess;
 mod history;
