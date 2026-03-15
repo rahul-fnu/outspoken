@@ -19,6 +19,7 @@ pub struct ModelInfo {
     pub filename: String,
     pub size_bytes: u64,
     pub description: String,
+    pub recommended: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,25 +55,43 @@ pub fn available_models() -> Vec<ModelInfo> {
             name: "tiny".into(),
             filename: "ggml-tiny.bin".into(),
             size_bytes: 75_000_000,
-            description: "Tiny (~75MB) - Fastest, lowest accuracy".into(),
+            description: "Tiny (~75MB) - Fastest, lowest accuracy. CPU: ~1x realtime".into(),
+            recommended: false,
         },
         ModelInfo {
             name: "base".into(),
             filename: "ggml-base.bin".into(),
             size_bytes: 142_000_000,
-            description: "Base (~142MB) - Fast, good accuracy".into(),
+            description: "Base (~142MB) - Fast, good accuracy. CPU: ~2x realtime".into(),
+            recommended: false,
         },
         ModelInfo {
             name: "small".into(),
             filename: "ggml-small.bin".into(),
             size_bytes: 466_000_000,
-            description: "Small (~466MB) - Balanced speed and accuracy".into(),
+            description: "Small (~466MB) - Balanced speed and accuracy. CPU: ~4x realtime".into(),
+            recommended: false,
         },
         ModelInfo {
             name: "medium".into(),
             filename: "ggml-medium.bin".into(),
             size_bytes: 1_500_000_000,
-            description: "Medium (~1.5GB) - Slow, highest accuracy".into(),
+            description: "Medium (~1.5GB) - High accuracy, slow on CPU. CPU: ~10x realtime".into(),
+            recommended: false,
+        },
+        ModelInfo {
+            name: "large-v3-turbo-q5_0".into(),
+            filename: "ggml-large-v3-turbo-q5_0.bin".into(),
+            size_bytes: 400_000_000,
+            description: "Large V3 Turbo Q5_0 (~400MB) - Best English model for CPU. Only 4 decoder layers, quantized. CPU: ~3x realtime".into(),
+            recommended: true,
+        },
+        ModelInfo {
+            name: "large-v3-turbo".into(),
+            filename: "ggml-large-v3-turbo.bin".into(),
+            size_bytes: 800_000_000,
+            description: "Large V3 Turbo (~800MB) - Full precision turbo model. CPU: ~5x realtime".into(),
+            recommended: false,
         },
     ]
 }
