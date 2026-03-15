@@ -193,8 +193,7 @@ impl TranscriptionService {
         let start = std::time::Instant::now();
 
         // Run VAD segmentation
-        vad.process(audio)?;
-        let speech_segments = vad.flush();
+        let speech_segments = vad.segment(audio)?;
 
         // No speech detected — return empty result
         if speech_segments.is_empty() {
