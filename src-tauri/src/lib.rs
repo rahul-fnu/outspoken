@@ -330,23 +330,45 @@ fn update_settings(
 }
 
 #[tauri::command]
-fn save_history_entry(
-    text: String,
-    source_app: String,
-    duration_secs: f64,
-    language: String,
-) -> Result<history::HistoryEntry, String> {
-    history::save_entry(&text, &source_app, duration_secs, &language)
+fn save_transcription(
+    result: history::SaveTranscriptionInput,
+) -> Result<history::Transcription, String> {
+    history::save_transcription(&result)
 }
 
 #[tauri::command]
-fn query_history(query: history::HistoryQuery) -> Result<Vec<history::HistoryEntry>, String> {
-    history::query_entries(&query)
+fn search_history(
+    query: Option<String>,
+    filters: Option<history::SearchFilters>,
+) -> Result<Vec<history::Transcription>, String> {
+    let mut f = filters.unwrap_or(history::SearchFilters {
+        query: None,
+        source_app: None,
+        date_from: None,
+        date_to: None,
+        bookmarked_only: None,
+        limit: None,
+        offset: None,
+    });
+    if f.query.is_none() {
+        f.query = query;
+    }
+    history::search_history(&f)
 }
 
 #[tauri::command]
-fn delete_history_entry(id: i64) -> Result<(), String> {
-    history::delete_entry(id)
+fn delete_transcription(id: String) -> Result<(), String> {
+    history::delete_transcription(&id)
+}
+
+#[tauri::command]
+fn clear_history() -> Result<(), String> {
+    history::clear_history()
+}
+
+#[tauri::command]
+fn toggle_bookmark(id: String) -> Result<bool, String> {
+    history::toggle_bookmark(&id)
 }
 
 #[tauri::command]
@@ -355,8 +377,17 @@ fn get_history_stats() -> Result<history::HistoryStats, String> {
 }
 
 #[tauri::command]
-fn export_history(query: history::HistoryQuery, format: String) -> Result<String, String> {
-    history::export_entries(&query, &format)
+fn export_history(filters: Option<history::SearchFilters>, format: String) -> Result<String, String> {
+    let f = filters.unwrap_or(history::SearchFilters {
+        query: None,
+        source_app: None,
+        date_from: None,
+        date_to: None,
+        bookmarked_only: None,
+        limit: None,
+        offset: None,
+    });
+    history::export_history(&f, &format)
 }
 
 #[tauri::command]
@@ -500,9 +531,11 @@ pub fn run() {
             unregister_hotkey,
             get_settings,
             update_settings,
-            save_history_entry,
-            query_history,
-            delete_history_entry,
+            save_transcription,
+            search_history,
+            delete_transcription,
+            clear_history,
+            toggle_bookmark,
             get_history_stats,
             export_history,
             add_dictionary_entry,
