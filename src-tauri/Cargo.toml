@@ -38,5 +38,6 @@ arboard = "3"
 
 [features]
 default = []
+multilingual = []
 metal = ["whisper-rs/metal"]
 cuda = ["whisper-rs/cuda"]
