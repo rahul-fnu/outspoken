@@ -21,7 +21,7 @@ use hotkey::{HotkeyConfig, HotkeyConfigState};
 use models::{CancellationMap, ProgressMap};
 use settings::{AppSettings, SettingsState};
 use tokio::sync::Mutex;
-use transcription::{SupportedLanguage, TranscriptionConfig, TranscriptionResult, TranscriptionService};
+use transcription::{TranscriptionConfig, TranscriptionResult, TranscriptionService};
 use tray::{TrayRecordingState, TrayState};
 
 type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
@@ -222,7 +222,7 @@ async fn load_transcription_model(
 }
 
 #[tauri::command]
-fn list_supported_languages() -> Vec<SupportedLanguage> {
+fn list_supported_languages() -> Vec<transcription::SupportedLanguage> {
     transcription::supported_languages()
 }
 

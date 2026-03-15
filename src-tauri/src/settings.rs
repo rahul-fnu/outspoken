@@ -19,7 +19,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            language: "auto".into(),
+            language: "en".into(),
             auto_start: false,
             hotkey: "Ctrl+Shift+Space".into(),
             silence_threshold_db: -40.0,

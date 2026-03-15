@@ -29,15 +29,21 @@ pub struct TranscriptionConfig {
     pub thread_count: i32,
     /// If true, strip filler words from output.
     pub strip_filler_words: bool,
+    /// Beam size for decoding. 1 = greedy (fastest on CPU), 5 = beam search (better on GPU).
+    pub beam_size: i32,
 }
 
 impl Default for TranscriptionConfig {
     fn default() -> Self {
+        let thread_count = std::thread::available_parallelism()
+            .map(|n| n.get() as i32)
+            .unwrap_or(4);
         Self {
             language: Some("en".into()),
             translate: false,
-            thread_count: 4,
+            thread_count,
             strip_filler_words: false,
+            beam_size: 1,
         }
     }
 }
@@ -71,10 +77,20 @@ impl TranscriptionService {
             .create_state()
             .map_err(|e| format!("Failed to create state: {e}"))?;
 
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        let strategy = if self.config.beam_size > 1 {
+            SamplingStrategy::BeamSearch {
+                beam_size: self.config.beam_size,
+                patience: -1.0,
+            }
+        } else {
+            SamplingStrategy::Greedy { best_of: 1 }
+        };
+        let mut params = FullParams::new(strategy);
         params.set_language(self.config.language.as_deref());
         params.set_translate(self.config.translate);
         params.set_n_threads(self.config.thread_count);
+        params.set_no_context(true);
+        params.set_suppress_blank(true);
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
@@ -152,7 +168,18 @@ pub struct SupportedLanguage {
     pub name: String,
 }
 
+/// Returns the list of supported languages.
+/// When the `multilingual` feature is disabled, only English is supported.
+#[cfg(not(feature = "multilingual"))]
+pub fn supported_languages() -> Vec<SupportedLanguage> {
+    vec![SupportedLanguage {
+        code: "en".to_string(),
+        name: "English".to_string(),
+    }]
+}
+
 /// Returns the list of languages supported by Whisper, queried from whisper.cpp.
+#[cfg(feature = "multilingual")]
 pub fn supported_languages() -> Vec<SupportedLanguage> {
     let max_id = whisper_rs::standalone::get_lang_max_id();
     let mut languages = Vec::new();
