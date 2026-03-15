@@ -2,6 +2,7 @@ mod active_app;
 mod ai;
 mod audio;
 mod audio_level;
+mod audio_preprocess;
 mod history;
 mod hotkey;
 mod models;
@@ -241,9 +242,21 @@ async fn transcribe_recording(
             .clone()
     };
 
-    let result = tokio::task::spawn_blocking(move || service.transcribe(&audio_data))
-        .await
-        .map_err(|e| format!("Task join error: {e}"))??;
+    let result = tokio::task::spawn_blocking(move || {
+        // Preprocess: trim silence and normalize gain before whisper inference.
+        let processed = audio_preprocess::preprocess_audio(&audio_data);
+        if processed.is_empty() {
+            return Ok(TranscriptionResult {
+                text: String::new(),
+                segments: Vec::new(),
+                language: "unknown".into(),
+                duration_ms: 0,
+            });
+        }
+        service.transcribe(&processed)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))??;
 
     Ok(result)
 }
