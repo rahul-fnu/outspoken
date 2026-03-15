@@ -1,11 +1,9 @@
-
-
-```rust
 mod active_app;
 mod ai;
 mod audio;
 mod audio_level;
 mod history;
+pub mod mcp;
 mod hotkey;
 mod models;
 mod settings;
@@ -557,4 +555,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-```

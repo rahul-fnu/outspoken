@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "outspoken": {
+      "command": "outspoken",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
