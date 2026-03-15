@@ -4,6 +4,7 @@
 mod active_app;
 mod ai;
 mod audio;
+mod db;
 mod audio_level;
 mod history;
 mod hotkey;

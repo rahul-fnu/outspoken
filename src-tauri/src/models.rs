@@ -5,10 +5,11 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use reqwest::Client;
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+
+use crate::db;
 
 const HF_BASE_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
@@ -104,30 +105,8 @@ fn models_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn db_path() -> Result<PathBuf, String> {
-    let data_dir = dirs::data_dir().ok_or("Could not determine platform data directory")?;
-    let dir = data_dir.join("outspoken");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create data directory: {e}"))?;
-    Ok(dir.join("models.db"))
-}
-
-fn open_db() -> Result<Connection, String> {
-    let path = db_path()?;
-    let conn =
-        Connection::open(&path).map_err(|e| format!("Failed to open database: {e}"))?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS models (
-            name TEXT PRIMARY KEY,
-            filename TEXT NOT NULL,
-            size_bytes INTEGER NOT NULL,
-            path TEXT NOT NULL,
-            version TEXT NOT NULL,
-            downloaded_at TEXT NOT NULL
-        );",
-    )
-    .map_err(|e| format!("Failed to initialize database: {e}"))?;
-    Ok(conn)
+fn open_db() -> Result<rusqlite::Connection, String> {
+    db::open_db()
 }
 
 pub fn list_downloaded_models() -> Result<Vec<DownloadedModel>, String> {
