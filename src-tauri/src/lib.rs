@@ -1,6 +1,3 @@
-
-
-```rust
 mod active_app;
 mod ai;
 mod audio;
@@ -13,6 +10,7 @@ mod text_insert;
 mod text_processing;
 mod transcription;
 mod tray;
+mod vad;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -557,4 +555,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-```
