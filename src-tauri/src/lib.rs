@@ -1,5 +1,9 @@
+
+
+```rust
 mod audio;
 mod audio_level;
+mod hotkey;
 mod models;
 mod transcription;
 mod tray;
@@ -9,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use audio_level::{AudioLevelMonitor, SilenceConfig};
+use hotkey::{HotkeyConfig, HotkeyConfigState};
 use models::{CancellationMap, ProgressMap};
 use tokio::sync::Mutex;
 use transcription::{SupportedLanguage, TranscriptionConfig, TranscriptionResult, TranscriptionService};
@@ -248,6 +253,40 @@ fn set_tray_state(
     Ok(())
 }
 
+#[tauri::command]
+fn get_hotkey(
+    hotkey_config: tauri::State<'_, HotkeyConfigState>,
+) -> Result<String, String> {
+    let config = hotkey_config
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    Ok(config.shortcut.clone())
+}
+
+#[tauri::command]
+fn set_hotkey(
+    app_handle: tauri::AppHandle,
+    shortcut: String,
+    hotkey_config: tauri::State<'_, HotkeyConfigState>,
+) -> Result<(), String> {
+    // Try to register the new shortcut first
+    hotkey::register_hotkey(&app_handle, &shortcut)?;
+
+    // If registration succeeded, update the stored config
+    let mut config = hotkey_config
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    config.shortcut = shortcut;
+    Ok(())
+}
+
+#[tauri::command]
+fn unregister_hotkey(
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    hotkey::unregister_all(&app_handle)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -260,9 +299,12 @@ pub fn run() {
         Arc::new(std::sync::Mutex::new(None));
     let tray_recording_state: TrayRecordingState =
         Arc::new(std::sync::atomic::AtomicU8::new(TrayState::Idle as u8));
+    let hotkey_config: HotkeyConfigState =
+        std::sync::Mutex::new(HotkeyConfig::default());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(progress_map)
         .manage(cancellation_map)
         .manage(audio_state)
@@ -270,8 +312,13 @@ pub fn run() {
         .manage(silence_config)
         .manage(transcription_service)
         .manage(tray_recording_state)
+        .manage(hotkey_config)
         .setup(|app| {
             tray::setup_tray(app.handle())?;
+            // Register the default global hotkey
+            if let Err(e) = hotkey::register_hotkey(app.handle(), "Ctrl+Shift+Space") {
+                eprintln!("Failed to register default hotkey: {e}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -291,7 +338,11 @@ pub fn run() {
             transcribe_recording,
             list_supported_languages,
             set_tray_state,
+            get_hotkey,
+            set_hotkey,
+            unregister_hotkey,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+```
