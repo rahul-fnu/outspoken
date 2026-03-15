@@ -1,6 +1,7 @@
 mod active_app;
 mod audio;
 mod audio_level;
+mod history;
 mod hotkey;
 mod models;
 mod settings;
@@ -326,6 +327,36 @@ fn update_settings(
     Ok(())
 }
 
+#[tauri::command]
+fn save_history_entry(
+    text: String,
+    source_app: String,
+    duration_secs: f64,
+    language: String,
+) -> Result<history::HistoryEntry, String> {
+    history::save_entry(&text, &source_app, duration_secs, &language)
+}
+
+#[tauri::command]
+fn query_history(query: history::HistoryQuery) -> Result<Vec<history::HistoryEntry>, String> {
+    history::query_entries(&query)
+}
+
+#[tauri::command]
+fn delete_history_entry(id: i64) -> Result<(), String> {
+    history::delete_entry(id)
+}
+
+#[tauri::command]
+fn get_history_stats() -> Result<history::HistoryStats, String> {
+    history::get_stats()
+}
+
+#[tauri::command]
+fn export_history(query: history::HistoryQuery, format: String) -> Result<String, String> {
+    history::export_entries(&query, &format)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -387,6 +418,11 @@ pub fn run() {
             unregister_hotkey,
             get_settings,
             update_settings,
+            save_history_entry,
+            query_history,
+            delete_history_entry,
+            get_history_stats,
+            export_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
