@@ -4,6 +4,7 @@ use aes_gcm::{
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand::{rngs::OsRng, RngCore};
+use futures_util::StreamExt;
 use reqwest::Client;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -278,26 +279,36 @@ async fn process_openai(
         return Err(format!("OpenAI API error ({status}): {text}"));
     }
 
-    // Stream SSE response
+    // Stream SSE response incrementally
     let mut full_text = String::new();
-    let bytes = resp.bytes().await.map_err(|e| format!("Read error: {e}"))?;
-    let text = String::from_utf8_lossy(&bytes);
+    let mut line_buf = String::new();
+    let mut stream = resp.bytes_stream();
 
-    for line in text.lines() {
-        if let Some(data) = line.strip_prefix("data: ") {
-            if data.trim() == "[DONE]" {
-                break;
-            }
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
-                    full_text.push_str(content);
-                    let _ = app_handle.emit(
-                        "ai-chunk",
-                        AiChunkEvent {
-                            chunk: content.to_string(),
-                            done: false,
-                        },
-                    );
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| format!("Stream read error: {e}"))?;
+        let chunk_str = String::from_utf8_lossy(&chunk);
+        line_buf.push_str(&chunk_str);
+
+        // Process complete lines from buffer
+        while let Some(newline_pos) = line_buf.find('\n') {
+            let line = line_buf[..newline_pos].trim_end_matches('\r').to_string();
+            line_buf = line_buf[newline_pos + 1..].to_string();
+
+            if let Some(data) = line.strip_prefix("data: ") {
+                if data.trim() == "[DONE]" {
+                    break;
+                }
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
+                        full_text.push_str(content);
+                        let _ = app_handle.emit(
+                            "ai-chunk",
+                            AiChunkEvent {
+                                chunk: content.to_string(),
+                                done: false,
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -361,30 +372,40 @@ async fn process_anthropic(
         return Err(format!("Anthropic API error ({status}): {text}"));
     }
 
-    // Stream SSE response
+    // Stream SSE response incrementally
     let mut full_text = String::new();
-    let bytes = resp.bytes().await.map_err(|e| format!("Read error: {e}"))?;
-    let text = String::from_utf8_lossy(&bytes);
+    let mut line_buf = String::new();
+    let mut stream = resp.bytes_stream();
 
-    for line in text.lines() {
-        if let Some(data) = line.strip_prefix("data: ") {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                let event_type = parsed["type"].as_str().unwrap_or("");
-                match event_type {
-                    "content_block_delta" => {
-                        if let Some(content) = parsed["delta"]["text"].as_str() {
-                            full_text.push_str(content);
-                            let _ = app_handle.emit(
-                                "ai-chunk",
-                                AiChunkEvent {
-                                    chunk: content.to_string(),
-                                    done: false,
-                                },
-                            );
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| format!("Stream read error: {e}"))?;
+        let chunk_str = String::from_utf8_lossy(&chunk);
+        line_buf.push_str(&chunk_str);
+
+        // Process complete lines from buffer
+        while let Some(newline_pos) = line_buf.find('\n') {
+            let line = line_buf[..newline_pos].trim_end_matches('\r').to_string();
+            line_buf = line_buf[newline_pos + 1..].to_string();
+
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                    let event_type = parsed["type"].as_str().unwrap_or("");
+                    match event_type {
+                        "content_block_delta" => {
+                            if let Some(content) = parsed["delta"]["text"].as_str() {
+                                full_text.push_str(content);
+                                let _ = app_handle.emit(
+                                    "ai-chunk",
+                                    AiChunkEvent {
+                                        chunk: content.to_string(),
+                                        done: false,
+                                    },
+                                );
+                            }
                         }
+                        "message_stop" => break,
+                        _ => {}
                     }
-                    "message_stop" => break,
-                    _ => {}
                 }
             }
         }
