@@ -48,7 +48,7 @@ rand = "0.8"
 base64 = "0.22"
 arboard = "3"
 silero-vad-rust = { version = "6.2", default-features = false }
-ort = { version = "2.0.0-rc.12", default-features = false, features = ["ndarray"] }
+ort = { version = "2.0.0-rc.12", features = ["ndarray"] }
 indicatif = "0.17"
 clap = { version = "4", features = ["derive"] }
 ctrlc = "3"

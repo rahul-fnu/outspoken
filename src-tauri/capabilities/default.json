@@ -1,6 +1,3 @@
-
-
-```json
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
@@ -16,4 +13,3 @@
     "global-shortcut:allow-is-registered"
   ]
 }
-```
