@@ -3,15 +3,15 @@
 ```rust
 mod active_app;
 mod ai;
-mod audio;
+pub mod audio;
 mod audio_level;
 mod history;
 mod hotkey;
-mod models;
+pub mod models;
 mod settings;
 mod text_insert;
 mod text_processing;
-mod transcription;
+pub mod transcription;
 mod tray;
 
 use std::collections::HashMap;

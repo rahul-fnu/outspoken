@@ -9,6 +9,10 @@ edition = "2021"
 name = "outspoken_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "outspoken"
+path = "src/bin/outspoken.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -35,6 +39,8 @@ base64 = "0.22"
 tauri-plugin-global-shortcut = "2"
 enigo = "0.2"
 arboard = "3"
+indicatif = "0.17"
+clap = { version = "4", features = ["derive"] }
 
 [features]
 default = []

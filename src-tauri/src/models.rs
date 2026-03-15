@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -12,6 +13,14 @@ use tokio_util::sync::CancellationToken;
 
 const HF_BASE_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+
+const SILERO_VAD_URL: &str =
+    "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx";
+const SILERO_VAD_FILENAME: &str = "silero_vad.onnx";
+const SILERO_VAD_SIZE: u64 = 2_000_000;
+
+/// Cached flag: true once we've confirmed at least one whisper model is downloaded.
+static MODELS_CHECKED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -349,4 +358,187 @@ async fn update_progress_status(
     if let Some(p) = map.get_mut(model_name) {
         p.status = status;
     }
+}
+
+/// Returns the recommended model info.
+pub fn recommended_model() -> ModelInfo {
+    available_models()
+        .into_iter()
+        .find(|m| m.recommended)
+        .expect("No recommended model in registry")
+}
+
+/// Returns the path for a downloaded model, or None if not downloaded.
+pub fn get_model_path(model_name: &str) -> Result<Option<PathBuf>, String> {
+    let downloaded = list_downloaded_models()?;
+    if let Some(m) = downloaded.iter().find(|m| m.name == model_name) {
+        let p = PathBuf::from(&m.path);
+        if p.exists() {
+            return Ok(Some(p));
+        }
+    }
+    Ok(None)
+}
+
+/// Returns true if any whisper model is already downloaded.
+pub fn has_any_model() -> Result<bool, String> {
+    if MODELS_CHECKED.load(Ordering::Relaxed) {
+        return Ok(true);
+    }
+    let downloaded = list_downloaded_models()?;
+    let has = !downloaded.is_empty();
+    if has {
+        MODELS_CHECKED.store(true, Ordering::Relaxed);
+    }
+    Ok(has)
+}
+
+/// Progress callback type: receives (downloaded_bytes, total_bytes).
+pub type ProgressCallback = Box<dyn Fn(u64, u64) + Send + Sync>;
+
+/// Download a model with a simple progress callback (no cancellation maps needed).
+/// Used by the CLI and auto-download logic.
+pub async fn download_model_with_callback(
+    model_name: &str,
+    on_progress: Option<ProgressCallback>,
+) -> Result<DownloadedModel, String> {
+    let info = available_models()
+        .into_iter()
+        .find(|m| m.name == model_name)
+        .ok_or_else(|| format!("Unknown model: {model_name}"))?;
+
+    let dir = models_dir()?;
+    let file_path = dir.join(&info.filename);
+
+    // If already downloaded, return it
+    if let Some(existing) = get_model_path(model_name)? {
+        let metadata = std::fs::metadata(&existing)
+            .map_err(|e| format!("Failed to read metadata: {e}"))?;
+        return Ok(DownloadedModel {
+            name: model_name.to_string(),
+            filename: info.filename,
+            size_bytes: metadata.len(),
+            path: existing.to_string_lossy().into_owned(),
+            version: "1.0".into(),
+            downloaded_at: Utc::now().to_rfc3339(),
+        });
+    }
+
+    let url = format!("{HF_BASE_URL}/{}", info.filename);
+    let client = Client::new();
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Download request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    let total_bytes = response.content_length().unwrap_or(info.size_bytes);
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(&file_path)
+        .await
+        .map_err(|e| format!("Failed to create file: {e}"))?;
+
+    let mut downloaded: u64 = 0;
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| format!("Download stream error: {e}"))?;
+        use tokio::io::AsyncWriteExt;
+        file.write_all(&bytes)
+            .await
+            .map_err(|e| format!("Failed to write to file: {e}"))?;
+        downloaded += bytes.len() as u64;
+        if let Some(ref cb) = on_progress {
+            cb(downloaded, total_bytes);
+        }
+    }
+
+    let metadata = tokio::fs::metadata(&file_path)
+        .await
+        .map_err(|e| format!("Failed to read file metadata: {e}"))?;
+
+    let now: DateTime<Utc> = Utc::now();
+    let model = DownloadedModel {
+        name: model_name.to_string(),
+        filename: info.filename,
+        size_bytes: metadata.len(),
+        path: file_path.to_string_lossy().into_owned(),
+        version: "1.0".into(),
+        downloaded_at: now.to_rfc3339(),
+    };
+
+    save_model_to_db(&model)?;
+    MODELS_CHECKED.store(true, Ordering::Relaxed);
+
+    Ok(model)
+}
+
+/// Ensure a specific model is downloaded, downloading it if missing.
+/// Returns the path to the model file.
+pub async fn ensure_model(
+    model_name: &str,
+    on_progress: Option<ProgressCallback>,
+) -> Result<PathBuf, String> {
+    if let Some(path) = get_model_path(model_name)? {
+        return Ok(path);
+    }
+    let result = download_model_with_callback(model_name, on_progress).await?;
+    Ok(PathBuf::from(result.path))
+}
+
+/// Ensure the recommended model is downloaded.
+pub async fn ensure_recommended_model(
+    on_progress: Option<ProgressCallback>,
+) -> Result<PathBuf, String> {
+    let rec = recommended_model();
+    ensure_model(&rec.name, on_progress).await
+}
+
+/// Returns the path to the Silero VAD model, downloading if missing.
+pub async fn ensure_vad_model(
+    on_progress: Option<ProgressCallback>,
+) -> Result<PathBuf, String> {
+    let dir = models_dir()?;
+    let file_path = dir.join(SILERO_VAD_FILENAME);
+
+    if file_path.exists() {
+        return Ok(file_path);
+    }
+
+    let client = Client::new();
+    let response = client
+        .get(SILERO_VAD_URL)
+        .send()
+        .await
+        .map_err(|e| format!("VAD download request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "VAD download failed with status: {}",
+            response.status()
+        ));
+    }
+
+    let total_bytes = response.content_length().unwrap_or(SILERO_VAD_SIZE);
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(&file_path)
+        .await
+        .map_err(|e| format!("Failed to create VAD file: {e}"))?;
+
+    let mut downloaded: u64 = 0;
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| format!("VAD download stream error: {e}"))?;
+        use tokio::io::AsyncWriteExt;
+        file.write_all(&bytes)
+            .await
+            .map_err(|e| format!("Failed to write VAD file: {e}"))?;
+        downloaded += bytes.len() as u64;
+        if let Some(ref cb) = on_progress {
+            cb(downloaded, total_bytes);
+        }
+    }
+
+    Ok(file_path)
 }
