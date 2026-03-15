@@ -27,8 +27,6 @@ pub struct TranscriptionConfig {
     pub translate: bool,
     /// Number of threads for whisper inference.
     pub thread_count: i32,
-    /// If true, strip filler words from output.
-    pub strip_filler_words: bool,
 }
 
 impl Default for TranscriptionConfig {
@@ -37,7 +35,6 @@ impl Default for TranscriptionConfig {
             language: Some("en".into()),
             translate: false,
             thread_count: 4,
-            strip_filler_words: false,
         }
     }
 }
@@ -121,14 +118,6 @@ impl TranscriptionService {
             }
         }
 
-        if self.config.strip_filler_words {
-            full_text = strip_filler_words(&full_text);
-            for seg in &mut segments {
-                seg.text = strip_filler_words(&seg.text);
-            }
-            segments.retain(|s| !s.text.is_empty());
-        }
-
         let detected_language = state
             .full_lang_id_from_state()
             .ok()
@@ -170,24 +159,3 @@ pub fn supported_languages() -> Vec<SupportedLanguage> {
     languages
 }
 
-/// Remove common filler words using simple regex-based replacement.
-fn strip_filler_words(text: &str) -> String {
-    // Pattern matches common English filler words as whole words (case-insensitive).
-    let fillers = [
-        "um", "uh", "er", "ah", "like", "you know", "I mean", "so", "well", "actually",
-        "basically", "literally", "right",
-    ];
-
-    let mut result = text.to_string();
-    for filler in &fillers {
-        // Match whole word boundaries with case-insensitive matching.
-        let pattern = format!(r"(?i)\b{}\b", regex_lite::escape(filler));
-        if let Ok(re) = regex_lite::Regex::new(&pattern) {
-            result = re.replace_all(&result, "").to_string();
-        }
-    }
-
-    // Clean up extra whitespace left by removals.
-    let ws_re = regex_lite::Regex::new(r"\s{2,}").unwrap();
-    ws_re.replace_all(result.trim(), " ").to_string()
-}
