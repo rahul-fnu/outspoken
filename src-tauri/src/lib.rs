@@ -3,6 +3,7 @@ mod audio;
 mod audio_level;
 mod hotkey;
 mod models;
+mod settings;
 mod text_insert;
 mod transcription;
 mod tray;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 use audio_level::{AudioLevelMonitor, SilenceConfig};
 use hotkey::{HotkeyConfig, HotkeyConfigState};
 use models::{CancellationMap, ProgressMap};
+use settings::{AppSettings, SettingsState};
 use tokio::sync::Mutex;
 use transcription::{SupportedLanguage, TranscriptionConfig, TranscriptionResult, TranscriptionService};
 use tray::{TrayRecordingState, TrayState};
@@ -301,6 +303,29 @@ fn unregister_hotkey(
     hotkey::unregister_all(&app_handle)
 }
 
+#[tauri::command]
+fn get_settings(
+    settings_state: tauri::State<'_, SettingsState>,
+) -> Result<AppSettings, String> {
+    let settings = settings_state
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    Ok(settings.clone())
+}
+
+#[tauri::command]
+fn update_settings(
+    new_settings: AppSettings,
+    settings_state: tauri::State<'_, SettingsState>,
+) -> Result<(), String> {
+    settings::save_settings(&new_settings)?;
+    let mut settings = settings_state
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    *settings = new_settings;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -315,6 +340,8 @@ pub fn run() {
         Arc::new(std::sync::atomic::AtomicU8::new(TrayState::Idle as u8));
     let hotkey_config: HotkeyConfigState =
         std::sync::Mutex::new(HotkeyConfig::default());
+    let app_settings: SettingsState =
+        std::sync::Mutex::new(settings::load_settings());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -327,6 +354,7 @@ pub fn run() {
         .manage(transcription_service)
         .manage(tray_recording_state)
         .manage(hotkey_config)
+        .manage(app_settings)
         .setup(|app| {
             tray::setup_tray(app.handle())?;
             // Register the default global hotkey
@@ -357,6 +385,8 @@ pub fn run() {
             get_hotkey,
             set_hotkey,
             unregister_hotkey,
+            get_settings,
+            update_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,47 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAudioLevel } from "./useAudioLevel";
-
-interface ModelInfo {
-  name: string;
-  filename: string;
-  size_bytes: number;
-  description: string;
-}
-
-interface DownloadedModel {
-  name: string;
-  filename: string;
-  size_bytes: number;
-  path: string;
-  version: string;
-  downloaded_at: string;
-}
-
-interface DownloadProgress {
-  model_name: string;
-  downloaded_bytes: number;
-  total_bytes: number;
-  progress_percent: number;
-  status: "Downloading" | "Completed" | "Cancelled" | "Failed";
-}
+import Settings from "./components/Settings";
 
 interface TranscriptionResult {
   text: string;
   segments: { start_ms: number; end_ms: number; text: string }[];
   language: string;
   duration_ms: number;
-}
-
-interface SupportedLanguage {
-  code: string;
-  name: string;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
-  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(0)} MB`;
-  return `${(bytes / 1_000).toFixed(0)} KB`;
 }
 
 function formatDuration(seconds: number): string {
@@ -65,21 +31,9 @@ function App() {
   const [copied, setCopied] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
 
-  // Model state
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
-  const [downloadedModels, setDownloadedModels] = useState<DownloadedModel[]>([]);
-  const [downloading, setDownloading] = useState<Record<string, DownloadProgress>>({});
+  // Model & language state (shared with settings)
   const [activeModel, setActiveModel] = useState<string | null>(null);
-  const [loadingModel, setLoadingModel] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Settings state
-  const [languages, setLanguages] = useState<SupportedLanguage[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("auto");
-  const [hotkey, setHotkey] = useState<string>("");
-  const [hotkeyInput, setHotkeyInput] = useState<string>("");
-  const [hotkeyError, setHotkeyError] = useState<string | null>(null);
-  const [hotkeySuccess, setHotkeySuccess] = useState<string | null>(null);
 
   // Audio level from hook
   const { levelDb } = useAudioLevel();
@@ -88,71 +42,6 @@ function App() {
   const normalizedLevel = isRecording
     ? Math.max(0, Math.min(1, (levelDb + 60) / 60))
     : 0;
-
-  // Load models and languages on mount
-  const loadModels = useCallback(async () => {
-    try {
-      const [available, downloaded] = await Promise.all([
-        invoke<ModelInfo[]>("list_available_models"),
-        invoke<DownloadedModel[]>("list_models"),
-      ]);
-      setAvailableModels(available);
-      setDownloadedModels(downloaded);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  const loadLanguages = useCallback(async () => {
-    try {
-      const langs = await invoke<SupportedLanguage[]>("list_supported_languages");
-      setLanguages(langs);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  const loadHotkey = useCallback(async () => {
-    try {
-      const current = await invoke<string>("get_hotkey");
-      setHotkey(current);
-      setHotkeyInput(current);
-    } catch (e) {
-      setHotkeyError(String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    loadModels();
-    loadLanguages();
-    loadHotkey();
-  }, [loadModels, loadLanguages, loadHotkey]);
-
-  // Poll download progress
-  useEffect(() => {
-    const activeDownloads = Object.keys(downloading).filter(
-      (name) => downloading[name].status === "Downloading"
-    );
-    if (activeDownloads.length === 0) return;
-
-    const interval = setInterval(async () => {
-      for (const name of activeDownloads) {
-        try {
-          const progress = await invoke<DownloadProgress>("get_download_progress", {
-            modelName: name,
-          });
-          setDownloading((prev) => ({ ...prev, [name]: progress }));
-          if (progress.status === "Completed") {
-            loadModels();
-          }
-        } catch {
-          // Progress not available yet
-        }
-      }
-    }, 500);
-
-    return () => clearInterval(interval);
-  }, [downloading, loadModels]);
 
   // Recording duration timer
   useEffect(() => {
@@ -175,23 +64,6 @@ function App() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isRecording]);
-
-  async function handleLoadModel(modelName: string) {
-    setLoadingModel(true);
-    setError(null);
-    try {
-      const lang = selectedLanguage === "auto" ? null : selectedLanguage;
-      await invoke("load_transcription_model", {
-        modelName,
-        config: { language: lang, translate: false, thread_count: 4, strip_filler_words: false },
-      });
-      setActiveModel(modelName);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoadingModel(false);
-    }
-  }
 
   async function toggleRecording() {
     setRecordError(null);
@@ -243,65 +115,6 @@ function App() {
     }
   }
 
-  async function handleDownload(modelName: string) {
-    setError(null);
-    setDownloading((prev) => ({
-      ...prev,
-      [modelName]: {
-        model_name: modelName,
-        downloaded_bytes: 0,
-        total_bytes: 0,
-        progress_percent: 0,
-        status: "Downloading",
-      },
-    }));
-    try {
-      await invoke<DownloadedModel>("download_model", { modelName });
-      await loadModels();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setDownloading((prev) => {
-        const next = { ...prev };
-        delete next[modelName];
-        return next;
-      });
-    }
-  }
-
-  async function handleCancel(modelName: string) {
-    try {
-      await invoke("cancel_download", { modelName });
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  async function handleDelete(modelName: string) {
-    setError(null);
-    try {
-      await invoke("delete_model", { name: modelName });
-      if (activeModel === modelName) setActiveModel(null);
-      await loadModels();
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  async function handleSetHotkey() {
-    setHotkeyError(null);
-    setHotkeySuccess(null);
-    try {
-      await invoke("set_hotkey", { shortcut: hotkeyInput });
-      setHotkey(hotkeyInput);
-      setHotkeySuccess("Hotkey updated successfully");
-      setTimeout(() => setHotkeySuccess(null), 3000);
-    } catch (e) {
-      setHotkeyError(String(e));
-    }
-  }
-
-  const downloadedNames = new Set(downloadedModels.map((m) => m.name));
   const hasModel = activeModel !== null;
 
   // --- Main Recording View ---
@@ -431,116 +244,13 @@ function App() {
 
   // --- Settings View ---
   return (
-    <main style={styles.container}>
-      <div style={styles.header}>
-        <h1 style={styles.title}>Settings</h1>
-        <button onClick={() => setView("main")} style={styles.settingsBtn}>
-          Back
-        </button>
-      </div>
-
-      {error && (
-        <div style={styles.error}>{error}</div>
-      )}
-
-      {/* Language */}
-      <section style={styles.section}>
-        <h2 style={styles.sectionTitle}>Language</h2>
-        <select
-          value={selectedLanguage}
-          onChange={(e) => setSelectedLanguage(e.target.value)}
-          style={styles.select}
-        >
-          <option value="auto">Auto-detect</option>
-          {languages.map((lang) => (
-            <option key={lang.code} value={lang.code}>
-              {lang.name} ({lang.code})
-            </option>
-          ))}
-        </select>
-        <div style={styles.hint}>
-          {selectedLanguage === "auto"
-            ? "Whisper will automatically detect the spoken language."
-            : `Manual selection: ${selectedLanguage}`}
-        </div>
-      </section>
-
-      {/* Hotkey */}
-      <section style={styles.section}>
-        <h2 style={styles.sectionTitle}>Global Hotkey</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="text"
-            value={hotkeyInput}
-            onChange={(e) => setHotkeyInput(e.target.value)}
-            placeholder="e.g. Ctrl+Shift+Space"
-            style={styles.input}
-          />
-          <button onClick={handleSetHotkey} disabled={hotkeyInput === hotkey}>
-            Apply
-          </button>
-        </div>
-        <div style={styles.hint}>
-          Current: <strong>{hotkey || "None"}</strong> -- toggles dictation from any app
-        </div>
-        {hotkeyError && <div style={{ ...styles.hint, color: "red" }}>{hotkeyError}</div>}
-        {hotkeySuccess && <div style={{ ...styles.hint, color: "green" }}>{hotkeySuccess}</div>}
-      </section>
-
-      {/* Models */}
-      <section style={styles.section}>
-        <h2 style={styles.sectionTitle}>Whisper Models</h2>
-        {availableModels.map((model) => {
-          const isDownloaded = downloadedNames.has(model.name);
-          const progress = downloading[model.name];
-          const isDownloading = progress?.status === "Downloading";
-          const isActive = activeModel === model.name;
-
-          return (
-            <div key={model.name} style={styles.modelCard}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <strong>{model.name}</strong>
-                  {isActive && <span style={styles.activeBadge}>Active</span>}
-                  <span style={{ marginLeft: 8, color: "#888" }}>{formatBytes(model.size_bytes)}</span>
-                </div>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {isDownloaded && !isDownloading && !isActive && (
-                    <button onClick={() => handleLoadModel(model.name)} disabled={loadingModel}>
-                      {loadingModel ? "Loading..." : "Load"}
-                    </button>
-                  )}
-                  {isDownloaded && !isDownloading && (
-                    <button onClick={() => handleDelete(model.name)}>Delete</button>
-                  )}
-                  {!isDownloaded && !isDownloading && (
-                    <button onClick={() => handleDownload(model.name)}>Download</button>
-                  )}
-                  {isDownloading && (
-                    <button onClick={() => handleCancel(model.name)}>Cancel</button>
-                  )}
-                </div>
-              </div>
-              <div style={styles.hint}>{model.description}</div>
-              {isDownloading && progress && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={styles.progressTrack}>
-                    <div style={{ ...styles.progressBar, width: `${progress.progress_percent}%` }} />
-                  </div>
-                  <div style={{ fontSize: "0.8rem", marginTop: 4 }}>
-                    {formatBytes(progress.downloaded_bytes)} / {formatBytes(progress.total_bytes)} (
-                    {progress.progress_percent.toFixed(1)}%)
-                  </div>
-                </div>
-              )}
-              {isDownloaded && !isActive && (
-                <div style={{ fontSize: "0.8rem", color: "green", marginTop: 4 }}>Downloaded</div>
-              )}
-            </div>
-          );
-        })}
-      </section>
-    </main>
+    <Settings
+      onBack={() => setView("main")}
+      onModelLoaded={(name) => setActiveModel(name || null)}
+      activeModel={activeModel}
+      onLanguageChange={setSelectedLanguage}
+      selectedLanguage={selectedLanguage}
+    />
   );
 }
 
@@ -725,53 +435,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.75rem",
     color: "#999",
     marginTop: 6,
-  },
-  section: {
-    marginBottom: "1.5rem",
-  },
-  sectionTitle: {
-    fontSize: "1.1rem",
-    marginBottom: "0.5rem",
-  },
-  select: {
-    padding: "0.4rem",
-    fontSize: "1rem",
-    minWidth: 200,
-  },
-  input: {
-    padding: "0.4rem",
-    fontSize: "1rem",
-    minWidth: 200,
-  },
-  hint: {
-    fontSize: "0.85rem",
-    color: "#666",
-    marginTop: 4,
-  },
-  modelCard: {
-    border: "1px solid #ddd",
-    borderRadius: 8,
-    padding: "0.75rem 1rem",
-    marginBottom: "0.5rem",
-  },
-  activeBadge: {
-    marginLeft: 8,
-    fontSize: "0.75rem",
-    padding: "2px 6px",
-    background: "#4caf50",
-    color: "#fff",
-    borderRadius: 4,
-  },
-  progressTrack: {
-    background: "#eee",
-    borderRadius: 4,
-    height: 8,
-    overflow: "hidden",
-  },
-  progressBar: {
-    background: "#4caf50",
-    height: "100%",
-    transition: "width 0.3s",
   },
 };
 
