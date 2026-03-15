@@ -1,20 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-interface HistoryEntry {
-  id: number;
+interface Transcription {
+  id: string;
   text: string;
-  source_app: string;
-  duration_secs: number;
-  language: string;
-  created_at: string;
+  raw_text: string;
+  timestamp: number;
+  duration_ms: number | null;
+  source_app: string | null;
+  language: string | null;
+  model_used: string | null;
+  is_bookmarked: boolean;
 }
 
-interface HistoryQuery {
-  search?: string;
+interface SearchFilters {
+  query?: string;
   source_app?: string;
-  date_from?: string;
-  date_to?: string;
+  date_from?: number;
+  date_to?: number;
+  bookmarked_only?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -30,9 +34,9 @@ interface HistoryProps {
 
 const PAGE_SIZE = 50;
 
-function formatDate(iso: string): string {
+function formatTimestamp(ts: number): string {
   try {
-    const d = new Date(iso);
+    const d = new Date(ts * 1000);
     return d.toLocaleDateString(undefined, {
       year: "numeric",
       month: "short",
@@ -41,11 +45,13 @@ function formatDate(iso: string): string {
       minute: "2-digit",
     });
   } catch {
-    return iso;
+    return String(ts);
   }
 }
 
-function formatDuration(secs: number): string {
+function formatDuration(ms: number | null): string {
+  if (ms == null) return "";
+  const secs = ms / 1000;
   if (secs < 60) return `${Math.round(secs)}s`;
   const m = Math.floor(secs / 60);
   const s = Math.round(secs % 60);
@@ -57,31 +63,42 @@ function truncate(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + "...";
 }
 
+function dateToTimestamp(dateStr: string, endOfDay = false): number | undefined {
+  if (!dateStr) return undefined;
+  const d = new Date(dateStr);
+  if (endOfDay) {
+    d.setHours(23, 59, 59, 999);
+  }
+  return Math.floor(d.getTime() / 1000);
+}
+
 export default function History({ onBack }: HistoryProps) {
-  const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [entries, setEntries] = useState<Transcription[]>([]);
   const [stats, setStats] = useState<HistoryStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [sourceAppFilter, setSourceAppFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [copied, setCopied] = useState<number | null>(null);
+  const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [exportFormat, setExportFormat] = useState("txt");
   const [error, setError] = useState<string | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const buildQuery = useCallback(
-    (offset = 0): HistoryQuery => ({
-      search: search || undefined,
+  const buildFilters = useCallback(
+    (offset = 0): SearchFilters => ({
+      query: search || undefined,
       source_app: sourceAppFilter || undefined,
-      date_from: dateFrom || undefined,
-      date_to: dateTo ? dateTo + "T23:59:59Z" : undefined,
+      date_from: dateToTimestamp(dateFrom),
+      date_to: dateToTimestamp(dateTo, true),
+      bookmarked_only: bookmarkedOnly || undefined,
       limit: PAGE_SIZE,
       offset,
     }),
-    [search, sourceAppFilter, dateFrom, dateTo]
+    [search, sourceAppFilter, dateFrom, dateTo, bookmarkedOnly]
   );
 
   const loadEntries = useCallback(
@@ -90,8 +107,11 @@ export default function History({ onBack }: HistoryProps) {
       setLoading(true);
       try {
         const offset = append ? entries.length : 0;
-        const query = buildQuery(offset);
-        const result = await invoke<HistoryEntry[]>("query_history", { query });
+        const filters = buildFilters(offset);
+        const result = await invoke<Transcription[]>("search_history", {
+          query: filters.query,
+          filters,
+        });
         if (append) {
           setEntries((prev) => [...prev, ...result]);
         } else {
@@ -104,7 +124,7 @@ export default function History({ onBack }: HistoryProps) {
         setLoading(false);
       }
     },
-    [buildQuery, entries.length]
+    [buildFilters, entries.length]
   );
 
   const loadStats = useCallback(async () => {
@@ -131,11 +151,11 @@ export default function History({ onBack }: HistoryProps) {
     return () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
-  }, [search, sourceAppFilter, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, sourceAppFilter, dateFrom, dateTo, bookmarkedOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleDelete(id: number) {
+  async function handleDelete(id: string) {
     try {
-      await invoke("delete_history_entry", { id });
+      await invoke("delete_transcription", { id });
       setEntries((prev) => prev.filter((e) => e.id !== id));
       if (expandedId === id) setExpandedId(null);
       loadStats();
@@ -144,7 +164,34 @@ export default function History({ onBack }: HistoryProps) {
     }
   }
 
-  async function handleCopy(text: string, id: number) {
+  async function handleToggleBookmark(id: string) {
+    try {
+      const isNowBookmarked = await invoke<boolean>("toggle_bookmark", { id });
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === id ? { ...e, is_bookmarked: isNowBookmarked } : e
+        )
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleClearHistory() {
+    if (!confirm("Are you sure you want to delete all transcription history? This cannot be undone.")) {
+      return;
+    }
+    try {
+      await invoke("clear_history");
+      setEntries([]);
+      setExpandedId(null);
+      loadStats();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleCopy(text: string, id: string) {
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -162,16 +209,17 @@ export default function History({ onBack }: HistoryProps) {
   async function handleExport() {
     setError(null);
     try {
-      const query: HistoryQuery = {
-        search: search || undefined,
+      const filters: SearchFilters = {
+        query: search || undefined,
         source_app: sourceAppFilter || undefined,
-        date_from: dateFrom || undefined,
-        date_to: dateTo ? dateTo + "T23:59:59Z" : undefined,
+        date_from: dateToTimestamp(dateFrom),
+        date_to: dateToTimestamp(dateTo, true),
+        bookmarked_only: bookmarkedOnly || undefined,
         limit: 10000,
         offset: 0,
       };
       const content = await invoke<string>("export_history", {
-        query,
+        filters,
         format: exportFormat,
       });
       // Trigger download via blob
@@ -222,6 +270,11 @@ export default function History({ onBack }: HistoryProps) {
         <span style={styles.count}>
           {stats ? `${stats.total_count} total` : ""}
         </span>
+        {stats && stats.total_count > 0 && (
+          <button onClick={handleClearHistory} style={styles.clearBtn}>
+            Clear All
+          </button>
+        )}
       </div>
 
       {/* Search bar */}
@@ -269,6 +322,17 @@ export default function History({ onBack }: HistoryProps) {
             onChange={(e) => setDateTo(e.target.value)}
             style={styles.filterInput}
           />
+        </div>
+        <div style={styles.filterGroup}>
+          <label style={styles.filterLabel}>
+            <input
+              type="checkbox"
+              checked={bookmarkedOnly}
+              onChange={(e) => setBookmarkedOnly(e.target.checked)}
+              style={{ marginRight: 4 }}
+            />
+            Bookmarked
+          </label>
         </div>
         <div style={styles.filterGroup}>
           <label style={styles.filterLabel}>Export</label>
@@ -322,13 +386,18 @@ export default function History({ onBack }: HistoryProps) {
                   {/* Summary row */}
                   <div style={styles.entrySummary}>
                     <div style={styles.entryMeta}>
-                      <span style={styles.entryDate}>{formatDate(entry.created_at)}</span>
+                      <span style={styles.entryDate}>{formatTimestamp(entry.timestamp)}</span>
                       {entry.source_app && (
                         <span style={styles.entryApp}>{entry.source_app}</span>
                       )}
-                      <span style={styles.entryDuration}>
-                        {formatDuration(entry.duration_secs)}
-                      </span>
+                      {entry.duration_ms != null && (
+                        <span style={styles.entryDuration}>
+                          {formatDuration(entry.duration_ms)}
+                        </span>
+                      )}
+                      {entry.is_bookmarked && (
+                        <span style={styles.bookmarkIndicator}>*</span>
+                      )}
                     </div>
                     <div style={styles.entryPreview}>
                       {isExpanded ? "" : truncate(entry.text, 100)}
@@ -348,6 +417,12 @@ export default function History({ onBack }: HistoryProps) {
                           style={styles.actionBtn}
                         >
                           {copied === entry.id ? "Copied!" : "Copy"}
+                        </button>
+                        <button
+                          onClick={() => handleToggleBookmark(entry.id)}
+                          style={styles.actionBtn}
+                        >
+                          {entry.is_bookmarked ? "Unbookmark" : "Bookmark"}
                         </button>
                         <button
                           onClick={() => handleDelete(entry.id)}
@@ -381,7 +456,7 @@ export default function History({ onBack }: HistoryProps) {
       {/* Empty state */}
       {!loading && entries.length === 0 && (
         <div style={styles.emptyState}>
-          {search || sourceAppFilter || dateFrom || dateTo
+          {search || sourceAppFilter || dateFrom || dateTo || bookmarkedOnly
             ? "No transcriptions match your filters."
             : "No transcriptions yet. Start recording to build your history."}
         </div>
@@ -418,6 +493,15 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     border: "1px solid #ccc",
     background: "#f5f5f5",
+  },
+  clearBtn: {
+    padding: "0.4rem 0.75rem",
+    fontSize: "0.8rem",
+    cursor: "pointer",
+    borderRadius: 6,
+    border: "1px solid #ef5350",
+    background: "#fff",
+    color: "#d32f2f",
   },
   title: {
     margin: 0,
@@ -532,6 +616,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   entryDuration: {
     color: "#999",
+  },
+  bookmarkIndicator: {
+    color: "#f9a825",
+    fontWeight: "bold",
   },
   entryPreview: {
     fontSize: "0.85rem",

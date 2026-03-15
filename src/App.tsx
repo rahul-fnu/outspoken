@@ -95,11 +95,15 @@ function App() {
             const appInfo = await invoke<{ name: string }>("get_active_app");
             sourceApp = appInfo.name || "";
           } catch { /* ignore */ }
-          await invoke("save_history_entry", {
-            text: result.text,
-            sourceApp,
-            durationSecs: recordingDuration,
-            language: result.language,
+          await invoke("save_transcription", {
+            result: {
+              text: result.text,
+              raw_text: result.text,
+              duration_ms: Math.round(recordingDuration * 1000),
+              source_app: sourceApp || undefined,
+              language: result.language || undefined,
+              model_used: undefined,
+            },
           }).catch(() => {});
         }
       } catch (e) {

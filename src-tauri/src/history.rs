@@ -1,24 +1,38 @@
-use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryEntry {
-    pub id: i64,
+pub struct Transcription {
+    pub id: String,
     pub text: String,
-    pub source_app: String,
-    pub duration_secs: f64,
-    pub language: String,
-    pub created_at: String,
+    pub raw_text: String,
+    pub timestamp: i64,
+    pub duration_ms: Option<i64>,
+    pub source_app: Option<String>,
+    pub language: Option<String>,
+    pub model_used: Option<String>,
+    pub is_bookmarked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryQuery {
-    pub search: Option<String>,
+pub struct SaveTranscriptionInput {
+    pub text: String,
+    pub raw_text: Option<String>,
+    pub duration_ms: Option<i64>,
     pub source_app: Option<String>,
-    pub date_from: Option<String>,
-    pub date_to: Option<String>,
+    pub language: Option<String>,
+    pub model_used: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchFilters {
+    pub query: Option<String>,
+    pub source_app: Option<String>,
+    pub date_from: Option<i64>,
+    pub date_to: Option<i64>,
+    pub bookmarked_only: Option<bool>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -41,88 +55,171 @@ fn open_db() -> Result<Connection, String> {
     let path = db_path();
     let conn = Connection::open(&path).map_err(|e| format!("Failed to open history db: {e}"))?;
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        "CREATE TABLE IF NOT EXISTS transcriptions (
+            id TEXT PRIMARY KEY,
             text TEXT NOT NULL,
-            source_app TEXT NOT NULL DEFAULT '',
-            duration_secs REAL NOT NULL DEFAULT 0.0,
-            language TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            raw_text TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            duration_ms INTEGER,
+            source_app TEXT,
+            language TEXT,
+            model_used TEXT,
+            is_bookmarked INTEGER DEFAULT 0
         );
-        CREATE INDEX IF NOT EXISTS idx_history_created_at ON history(created_at);
-        CREATE INDEX IF NOT EXISTS idx_history_source_app ON history(source_app);",
+        CREATE INDEX IF NOT EXISTS idx_transcriptions_timestamp ON transcriptions(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_transcriptions_source_app ON transcriptions(source_app);
+        CREATE INDEX IF NOT EXISTS idx_transcriptions_bookmarked ON transcriptions(is_bookmarked);",
     )
-    .map_err(|e| format!("Failed to create history table: {e}"))?;
+    .map_err(|e| format!("Failed to create transcriptions table: {e}"))?;
+
+    // Create FTS5 virtual table if it doesn't exist.
+    // We use an external content table pointing to transcriptions.
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS transcriptions_fts USING fts5(
+            text,
+            content=transcriptions,
+            content_rowid=rowid
+        );",
+    )
+    .map_err(|e| format!("Failed to create FTS table: {e}"))?;
+
+    // Triggers to keep FTS in sync
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS transcriptions_ai AFTER INSERT ON transcriptions BEGIN
+            INSERT INTO transcriptions_fts(rowid, text) VALUES (new.rowid, new.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS transcriptions_ad AFTER DELETE ON transcriptions BEGIN
+            INSERT INTO transcriptions_fts(transcriptions_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS transcriptions_au AFTER UPDATE ON transcriptions BEGIN
+            INSERT INTO transcriptions_fts(transcriptions_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+            INSERT INTO transcriptions_fts(rowid, text) VALUES (new.rowid, new.text);
+        END;",
+    )
+    .map_err(|e| format!("Failed to create FTS triggers: {e}"))?;
+
     Ok(conn)
 }
 
-pub fn save_entry(
-    text: &str,
-    source_app: &str,
-    duration_secs: f64,
-    language: &str,
-) -> Result<HistoryEntry, String> {
-    let conn = open_db()?;
-    let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO history (text, source_app, duration_secs, language, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![text, source_app, duration_secs, language, now],
-    )
-    .map_err(|e| format!("Failed to save history entry: {e}"))?;
+fn generate_id() -> String {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let random: u32 = rand::random();
+    format!("{ts:x}-{random:08x}")
+}
 
-    let id = conn.last_insert_rowid();
-    Ok(HistoryEntry {
+fn now_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+pub fn save_transcription(input: &SaveTranscriptionInput) -> Result<Transcription, String> {
+    let conn = open_db()?;
+    let id = generate_id();
+    let timestamp = now_timestamp();
+    let raw_text = input.raw_text.as_deref().unwrap_or(&input.text);
+
+    conn.execute(
+        "INSERT INTO transcriptions (id, text, raw_text, timestamp, duration_ms, source_app, language, model_used, is_bookmarked)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
+        params![
+            id,
+            input.text,
+            raw_text,
+            timestamp,
+            input.duration_ms,
+            input.source_app,
+            input.language,
+            input.model_used,
+        ],
+    )
+    .map_err(|e| format!("Failed to save transcription: {e}"))?;
+
+    Ok(Transcription {
         id,
-        text: text.to_string(),
-        source_app: source_app.to_string(),
-        duration_secs,
-        language: language.to_string(),
-        created_at: now,
+        text: input.text.clone(),
+        raw_text: raw_text.to_string(),
+        timestamp,
+        duration_ms: input.duration_ms,
+        source_app: input.source_app.clone(),
+        language: input.language.clone(),
+        model_used: input.model_used.clone(),
+        is_bookmarked: false,
     })
 }
 
-pub fn query_entries(query: &HistoryQuery) -> Result<Vec<HistoryEntry>, String> {
+pub fn search_history(filters: &SearchFilters) -> Result<Vec<Transcription>, String> {
     let conn = open_db()?;
 
-    let mut sql = String::from(
-        "SELECT id, text, source_app, duration_secs, language, created_at FROM history WHERE 1=1",
-    );
+    let use_fts = filters
+        .query
+        .as_ref()
+        .is_some_and(|q| !q.trim().is_empty());
+
+    let mut sql = if use_fts {
+        // Join with FTS for full-text search
+        String::from(
+            "SELECT t.id, t.text, t.raw_text, t.timestamp, t.duration_ms, t.source_app, t.language, t.model_used, t.is_bookmarked
+             FROM transcriptions t
+             JOIN transcriptions_fts fts ON t.rowid = fts.rowid
+             WHERE transcriptions_fts MATCH ?",
+        )
+    } else {
+        String::from(
+            "SELECT id, text, raw_text, timestamp, duration_ms, source_app, language, model_used, is_bookmarked
+             FROM transcriptions WHERE 1=1",
+        )
+    };
+
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-    if let Some(ref search) = query.search {
-        if !search.is_empty() {
-            sql.push_str(" AND text LIKE ?");
-            param_values.push(Box::new(format!("%{search}%")));
-        }
+    if use_fts {
+        // FTS5 query: wrap each word with * for prefix matching
+        let query = filters.query.as_ref().unwrap();
+        let fts_query: String = query
+            .split_whitespace()
+            .map(|w| format!("\"{w}\"*"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        param_values.push(Box::new(fts_query));
     }
-    if let Some(ref app) = query.source_app {
+
+    if let Some(ref app) = filters.source_app {
         if !app.is_empty() {
             sql.push_str(" AND source_app = ?");
             param_values.push(Box::new(app.clone()));
         }
     }
-    if let Some(ref from) = query.date_from {
-        if !from.is_empty() {
-            sql.push_str(" AND created_at >= ?");
-            param_values.push(Box::new(from.clone()));
-        }
+    if let Some(from) = filters.date_from {
+        sql.push_str(" AND timestamp >= ?");
+        param_values.push(Box::new(from));
     }
-    if let Some(ref to) = query.date_to {
-        if !to.is_empty() {
-            sql.push_str(" AND created_at <= ?");
-            param_values.push(Box::new(to.clone()));
-        }
+    if let Some(to) = filters.date_to {
+        sql.push_str(" AND timestamp <= ?");
+        param_values.push(Box::new(to));
+    }
+    if filters.bookmarked_only == Some(true) {
+        sql.push_str(" AND is_bookmarked = 1");
     }
 
-    sql.push_str(" ORDER BY created_at DESC");
+    if use_fts {
+        sql.push_str(" ORDER BY rank");
+    } else {
+        sql.push_str(" ORDER BY timestamp DESC");
+    }
 
-    let limit = query.limit.unwrap_or(100);
-    let offset = query.offset.unwrap_or(0);
+    let limit = filters.limit.unwrap_or(100);
+    let offset = filters.offset.unwrap_or(0);
     sql.push_str(" LIMIT ? OFFSET ?");
     param_values.push(Box::new(limit));
     param_values.push(Box::new(offset));
 
-    let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
 
     let mut stmt = conn
         .prepare(&sql)
@@ -130,13 +227,16 @@ pub fn query_entries(query: &HistoryQuery) -> Result<Vec<HistoryEntry>, String> 
 
     let entries = stmt
         .query_map(params_refs.as_slice(), |row| {
-            Ok(HistoryEntry {
+            Ok(Transcription {
                 id: row.get(0)?,
                 text: row.get(1)?,
-                source_app: row.get(2)?,
-                duration_secs: row.get(3)?,
-                language: row.get(4)?,
-                created_at: row.get(5)?,
+                raw_text: row.get(2)?,
+                timestamp: row.get(3)?,
+                duration_ms: row.get(4)?,
+                source_app: row.get(5)?,
+                language: row.get(6)?,
+                model_used: row.get(7)?,
+                is_bookmarked: row.get::<_, i32>(8)? != 0,
             })
         })
         .map_err(|e| format!("Failed to query history: {e}"))?
@@ -146,25 +246,52 @@ pub fn query_entries(query: &HistoryQuery) -> Result<Vec<HistoryEntry>, String> 
     Ok(entries)
 }
 
-pub fn delete_entry(id: i64) -> Result<(), String> {
+pub fn delete_transcription(id: &str) -> Result<(), String> {
     let conn = open_db()?;
     let affected = conn
-        .execute("DELETE FROM history WHERE id = ?1", params![id])
-        .map_err(|e| format!("Failed to delete history entry: {e}"))?;
+        .execute("DELETE FROM transcriptions WHERE id = ?1", params![id])
+        .map_err(|e| format!("Failed to delete transcription: {e}"))?;
     if affected == 0 {
-        return Err(format!("No history entry found with id: {id}"));
+        return Err(format!("No transcription found with id: {id}"));
     }
     Ok(())
+}
+
+pub fn clear_history() -> Result<(), String> {
+    let conn = open_db()?;
+    conn.execute_batch("DELETE FROM transcriptions;")
+        .map_err(|e| format!("Failed to clear history: {e}"))?;
+    Ok(())
+}
+
+pub fn toggle_bookmark(id: &str) -> Result<bool, String> {
+    let conn = open_db()?;
+    let current: i32 = conn
+        .query_row(
+            "SELECT is_bookmarked FROM transcriptions WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Transcription not found: {e}"))?;
+
+    let new_val = if current == 0 { 1 } else { 0 };
+    conn.execute(
+        "UPDATE transcriptions SET is_bookmarked = ?1 WHERE id = ?2",
+        params![new_val, id],
+    )
+    .map_err(|e| format!("Failed to toggle bookmark: {e}"))?;
+
+    Ok(new_val == 1)
 }
 
 pub fn get_stats() -> Result<HistoryStats, String> {
     let conn = open_db()?;
     let total_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM transcriptions", [], |row| row.get(0))
         .map_err(|e| format!("Failed to count history: {e}"))?;
 
     let mut stmt = conn
-        .prepare("SELECT DISTINCT source_app FROM history WHERE source_app != '' ORDER BY source_app")
+        .prepare("SELECT DISTINCT source_app FROM transcriptions WHERE source_app IS NOT NULL AND source_app != '' ORDER BY source_app")
         .map_err(|e| format!("Failed to query source apps: {e}"))?;
     let source_apps = stmt
         .query_map([], |row| row.get::<_, String>(0))
@@ -178,23 +305,33 @@ pub fn get_stats() -> Result<HistoryStats, String> {
     })
 }
 
-pub fn export_entries(query: &HistoryQuery, format: &str) -> Result<String, String> {
-    let entries = query_entries(query)?;
+pub fn export_history(filters: &SearchFilters, format: &str) -> Result<String, String> {
+    // Use a large limit for exports
+    let mut export_filters = filters.clone();
+    if export_filters.limit.is_none() {
+        export_filters.limit = Some(100_000);
+    }
+    let entries = search_history(&export_filters)?;
 
     match format {
         "json" => serde_json::to_string_pretty(&entries)
             .map_err(|e| format!("Failed to serialize to JSON: {e}")),
         "csv" => {
-            let mut csv = String::from("id,text,source_app,duration_secs,language,created_at\n");
+            let mut csv = String::from(
+                "id,text,raw_text,timestamp,duration_ms,source_app,language,model_used,is_bookmarked\n",
+            );
             for entry in &entries {
                 csv.push_str(&format!(
-                    "{},\"{}\",\"{}\",{},{},{}\n",
-                    entry.id,
-                    entry.text.replace('"', "\"\""),
-                    entry.source_app.replace('"', "\"\""),
-                    entry.duration_secs,
-                    entry.language,
-                    entry.created_at,
+                    "{},\"{}\",\"{}\",{},{},{},{},{},{}\n",
+                    csv_escape(&entry.id),
+                    csv_escape(&entry.text),
+                    csv_escape(&entry.raw_text),
+                    entry.timestamp,
+                    entry.duration_ms.map_or(String::new(), |v| v.to_string()),
+                    csv_escape(entry.source_app.as_deref().unwrap_or("")),
+                    csv_escape(entry.language.as_deref().unwrap_or("")),
+                    csv_escape(entry.model_used.as_deref().unwrap_or("")),
+                    if entry.is_bookmarked { 1 } else { 0 },
                 ));
             }
             Ok(csv)
@@ -202,17 +339,35 @@ pub fn export_entries(query: &HistoryQuery, format: &str) -> Result<String, Stri
         "txt" => {
             let mut txt = String::new();
             for entry in &entries {
-                txt.push_str(&format!(
-                    "[{}] ({}, {}s, {})\n{}\n\n",
-                    entry.created_at,
-                    entry.source_app,
-                    entry.duration_secs as i64,
-                    entry.language,
-                    entry.text,
-                ));
+                let datetime = format_timestamp(entry.timestamp);
+                txt.push_str(&format!("[{}]", datetime));
+                if let Some(ref app) = entry.source_app {
+                    if !app.is_empty() {
+                        txt.push_str(&format!(" ({})", app));
+                    }
+                }
+                if let Some(ms) = entry.duration_ms {
+                    txt.push_str(&format!(" {}s", ms / 1000));
+                }
+                if entry.is_bookmarked {
+                    txt.push_str(" [bookmarked]");
+                }
+                txt.push('\n');
+                txt.push_str(&entry.text);
+                txt.push_str("\n\n");
             }
             Ok(txt)
         }
         _ => Err(format!("Unsupported export format: {format}")),
     }
+}
+
+fn csv_escape(s: &str) -> String {
+    s.replace('"', "\"\"")
+}
+
+fn format_timestamp(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| ts.to_string())
 }
