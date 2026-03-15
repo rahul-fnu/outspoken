@@ -1,57 +1,75 @@
+#[cfg(feature = "desktop")]
 mod active_app;
-mod ai;
-mod audio;
+pub mod ai;
+pub mod audio;
+#[cfg(feature = "desktop")]
 mod audio_level;
-mod audio_preprocess;
-mod db;
-mod history;
+pub mod audio_preprocess;
+pub mod db;
+pub mod history;
+#[cfg(feature = "desktop")]
 mod hotkey;
 pub mod mcp;
-mod models;
-mod settings;
+pub mod models;
+pub mod settings;
+#[cfg(feature = "desktop")]
 mod text_insert;
-mod text_processing;
-mod transcription;
+pub mod text_processing;
+pub mod transcription;
+#[cfg(feature = "desktop")]
 mod tray;
-mod vad;
+pub mod vad;
 
+#[cfg(feature = "desktop")]
 use std::collections::HashMap;
+#[cfg(feature = "desktop")]
 use std::path::PathBuf;
+#[cfg(feature = "desktop")]
 use std::sync::Arc;
 
+#[cfg(feature = "desktop")]
 use audio_level::{AudioLevelMonitor, SilenceConfig};
+#[cfg(feature = "desktop")]
 use hotkey::{HotkeyConfig, HotkeyConfigState};
+#[cfg(feature = "desktop")]
 use models::{CancellationMap, ProgressMap};
+#[cfg(feature = "desktop")]
 use settings::{AppSettings, SettingsState};
+#[cfg(feature = "desktop")]
 use tokio::sync::Mutex;
+#[cfg(feature = "desktop")]
 use transcription::{SupportedLanguage, TranscriptionConfig, TranscriptionResult, TranscriptionService};
+#[cfg(feature = "desktop")]
 use tray::{TrayRecordingState, TrayState};
 
+#[cfg(feature = "desktop")]
 type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
+#[cfg(feature = "desktop")]
 type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
+#[cfg(feature = "desktop")]
 type SilenceConfigState = Arc<std::sync::Mutex<SilenceConfig>>;
+#[cfg(feature = "desktop")]
 type TranscriptionServiceState = Arc<std::sync::Mutex<Option<TranscriptionService>>>;
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_active_app() -> Result<active_app::ActiveAppInfo, String> {
     active_app::get_active_app()
 }
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to Outspoken.", name)
-}
-
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn list_available_models() -> Vec<models::ModelInfo> {
     models::available_models()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn list_models() -> Result<Vec<models::DownloadedModel>, String> {
     models::list_downloaded_models()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn download_model(
     model_name: String,
@@ -66,6 +84,7 @@ async fn download_model(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn cancel_download(
     model_name: String,
@@ -80,6 +99,7 @@ async fn cancel_download(
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn get_download_progress(
     model_name: String,
@@ -91,16 +111,19 @@ async fn get_download_progress(
         .ok_or_else(|| format!("No download progress for model: {model_name}"))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn delete_model(name: String) -> Result<(), String> {
     models::delete_model(&name)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn list_audio_devices() -> Result<Vec<audio::AudioDeviceInfo>, String> {
     audio::list_devices()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn select_audio_device(
     device_name: Option<String>,
@@ -113,6 +136,7 @@ fn select_audio_device(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn start_recording(
     app_handle: tauri::AppHandle,
@@ -153,6 +177,7 @@ fn start_recording(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn stop_recording(
     audio_state: tauri::State<'_, AudioState>,
@@ -178,6 +203,7 @@ fn stop_recording(
     Ok(buffer)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn set_silence_config(
     threshold_db: f32,
@@ -192,6 +218,7 @@ fn set_silence_config(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn load_transcription_model(
     model_name: String,
@@ -224,11 +251,13 @@ async fn load_transcription_model(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn list_supported_languages() -> Vec<SupportedLanguage> {
     transcription::supported_languages()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn transcribe_recording(
     audio_data: Vec<f32>,
@@ -251,6 +280,7 @@ async fn transcribe_recording(
     Ok(result)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn set_tray_state(
     app_handle: tauri::AppHandle,
@@ -266,6 +296,7 @@ fn set_tray_state(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn insert_text(text: String) -> Result<(), String> {
     if text.is_empty() {
@@ -276,6 +307,7 @@ async fn insert_text(text: String) -> Result<(), String> {
         .map_err(|e| format!("Task join error: {e}"))?
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_hotkey(
     hotkey_config: tauri::State<'_, HotkeyConfigState>,
@@ -286,6 +318,7 @@ fn get_hotkey(
     Ok(config.shortcut.clone())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn set_hotkey(
     app_handle: tauri::AppHandle,
@@ -303,6 +336,7 @@ fn set_hotkey(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn unregister_hotkey(
     app_handle: tauri::AppHandle,
@@ -310,6 +344,7 @@ fn unregister_hotkey(
     hotkey::unregister_all(&app_handle)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_settings(
     settings_state: tauri::State<'_, SettingsState>,
@@ -320,6 +355,7 @@ fn get_settings(
     Ok(settings.clone())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn update_settings(
     new_settings: AppSettings,
@@ -333,6 +369,7 @@ fn update_settings(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn save_transcription(
     result: history::SaveTranscriptionInput,
@@ -340,6 +377,7 @@ fn save_transcription(
     history::save_transcription(&result)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn search_history(
     query: Option<String>,
@@ -360,26 +398,31 @@ fn search_history(
     history::search_history(&f)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn delete_transcription(id: String) -> Result<(), String> {
     history::delete_transcription(&id)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn clear_history() -> Result<(), String> {
     history::clear_history()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn toggle_bookmark(id: String) -> Result<bool, String> {
     history::toggle_bookmark(&id)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_history_stats() -> Result<history::HistoryStats, String> {
     history::get_stats()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn export_history(filters: Option<history::SearchFilters>, format: String) -> Result<String, String> {
     let f = filters.unwrap_or(history::SearchFilters {
@@ -394,6 +437,7 @@ fn export_history(filters: Option<history::SearchFilters>, format: String) -> Re
     history::export_history(&f, &format)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn add_dictionary_entry(
     from_text: String,
@@ -403,16 +447,19 @@ fn add_dictionary_entry(
     text_processing::add_entry(&from_text, &to_text, case_sensitive)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn remove_dictionary_entry(id: i64) -> Result<(), String> {
     text_processing::remove_entry(id)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn list_dictionary() -> Result<Vec<text_processing::DictionaryEntry>, String> {
     text_processing::list_entries()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn process_transcription_text(
     text: String,
@@ -422,6 +469,7 @@ fn process_transcription_text(
     Ok(text_processing::process_text(&text, strip_fillers, &entries))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn save_api_key(provider: String, key: String) -> Result<(), String> {
     // Validate key before saving
@@ -432,21 +480,25 @@ async fn save_api_key(provider: String, key: String) -> Result<(), String> {
     ai::save_api_key(&provider, &key)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn delete_api_key(provider: String) -> Result<(), String> {
     ai::delete_api_key(&provider)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn validate_api_key(provider: String, key: String) -> Result<bool, String> {
     ai::validate_api_key(&provider, &key).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn list_api_keys() -> Result<Vec<ai::ApiKeyInfo>, String> {
     ai::list_api_keys()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 async fn process_ai_text(
     app_handle: tauri::AppHandle,
@@ -455,11 +507,13 @@ async fn process_ai_text(
     ai::process_ai_text(app_handle, request).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn list_ai_prompts() -> Result<Vec<ai::AiPrompt>, String> {
     ai::list_prompts()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn save_custom_prompt(
     name: String,
@@ -469,11 +523,13 @@ fn save_custom_prompt(
     ai::save_custom_prompt(&name, &prompt, app_pattern.as_deref())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn delete_custom_prompt(id: i64) -> Result<(), String> {
     ai::delete_custom_prompt(id)
 }
 
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -513,7 +569,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_active_app,
-            greet,
             list_available_models,
             list_models,
             download_model,

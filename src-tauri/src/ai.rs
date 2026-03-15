@@ -4,11 +4,13 @@ use aes_gcm::{
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand::{rngs::OsRng, RngCore};
+#[cfg(feature = "desktop")]
 use futures_util::StreamExt;
 use reqwest::Client;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
 
 use crate::db;
@@ -202,6 +204,7 @@ pub struct AiResult {
     pub model: String,
 }
 
+#[cfg(feature = "desktop")]
 pub async fn process_ai_text(
     app_handle: AppHandle,
     request: AiRequest,
@@ -216,6 +219,7 @@ pub async fn process_ai_text(
     }
 }
 
+#[cfg(feature = "desktop")]
 async fn process_openai(
     app_handle: AppHandle,
     api_key: &str,
@@ -307,6 +311,7 @@ async fn process_openai(
     })
 }
 
+#[cfg(feature = "desktop")]
 async fn process_anthropic(
     app_handle: AppHandle,
     api_key: &str,

@@ -19,7 +19,7 @@ name = "outspoken"
 path = "src/bin/outspoken.rs"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"], optional = true }
@@ -52,7 +52,7 @@ ctrlc = "3"
 
 [features]
 default = ["desktop"]
-desktop = ["tauri", "tauri-plugin-opener", "tauri-plugin-global-shortcut", "enigo"]
+desktop = ["tauri", "tauri-plugin-opener", "tauri-plugin-global-shortcut", "enigo", "tauri-build"]
 multilingual = []
 metal = ["whisper-rs/metal"]
 cuda = ["whisper-rs/cuda"]

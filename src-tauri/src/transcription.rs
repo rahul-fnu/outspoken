@@ -193,7 +193,8 @@ impl TranscriptionService {
         let start = std::time::Instant::now();
 
         // Run VAD segmentation
-        let speech_segments = vad.segment(audio)?;
+        vad.process(audio)?;
+        let speech_segments = vad.flush();
 
         // No speech detected — return empty result
         if speech_segments.is_empty() {
@@ -215,15 +216,8 @@ impl TranscriptionService {
         let mut detected_language = None;
 
         for speech in &speech_segments {
-            let end_idx = speech.end.min(audio.len());
-            if speech.start >= end_idx {
-                continue;
-            }
-
-            let segment_audio = &audio[speech.start..end_idx];
-
             // Apply gain normalization to the segment
-            let normalized = normalize_gain(segment_audio);
+            let normalized = normalize_gain(&speech.audio);
 
             // Transcribe the normalized segment
             let seg_result = self.transcribe(&normalized)?;
@@ -234,7 +228,7 @@ impl TranscriptionService {
             }
 
             // Offset timestamps to be relative to original audio
-            let offset_ms = (speech.start as f64 / sample_rate * 1000.0) as i64;
+            let offset_ms = (speech.start_sample as f64 / sample_rate * 1000.0) as i64;
 
             for seg in seg_result.segments {
                 let adjusted = Segment {
