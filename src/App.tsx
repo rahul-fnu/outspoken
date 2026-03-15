@@ -76,6 +76,17 @@ function App() {
         const audioData = await invoke<number[]>("stop_recording");
         await invoke("set_tray_state", { state: "processing" });
         const result = await invoke<TranscriptionResult>("transcribe_recording", { audioData });
+        // Apply text post-processing (filler removal + dictionary corrections)
+        try {
+          const settings = await invoke<{ strip_filler_words: boolean }>("get_settings");
+          const processed = await invoke<string>("process_transcription_text", {
+            text: result.text,
+            stripFillers: settings.strip_filler_words,
+          });
+          result.text = processed;
+        } catch {
+          // If post-processing fails, use raw text
+        }
         setTranscription(result);
         // Auto-save to history
         if (result.text) {

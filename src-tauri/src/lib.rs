@@ -9,6 +9,7 @@ mod hotkey;
 mod models;
 mod settings;
 mod text_insert;
+mod text_processing;
 mod transcription;
 mod tray;
 
@@ -360,6 +361,34 @@ fn export_history(query: history::HistoryQuery, format: String) -> Result<String
     history::export_entries(&query, &format)
 }
 
+#[tauri::command]
+fn add_dictionary_entry(
+    from_text: String,
+    to_text: String,
+    case_sensitive: bool,
+) -> Result<text_processing::DictionaryEntry, String> {
+    text_processing::add_entry(&from_text, &to_text, case_sensitive)
+}
+
+#[tauri::command]
+fn remove_dictionary_entry(id: i64) -> Result<(), String> {
+    text_processing::remove_entry(id)
+}
+
+#[tauri::command]
+fn list_dictionary() -> Result<Vec<text_processing::DictionaryEntry>, String> {
+    text_processing::list_entries()
+}
+
+#[tauri::command]
+fn process_transcription_text(
+    text: String,
+    strip_fillers: bool,
+) -> Result<String, String> {
+    let entries = text_processing::list_entries()?;
+    Ok(text_processing::process_text(&text, strip_fillers, &entries))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -426,6 +455,10 @@ pub fn run() {
             delete_history_entry,
             get_history_stats,
             export_history,
+            add_dictionary_entry,
+            remove_dictionary_entry,
+            list_dictionary,
+            process_transcription_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

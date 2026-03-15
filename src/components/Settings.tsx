@@ -93,7 +93,16 @@ export default function Settings({
   const [loadingModel, setLoadingModel] = useState(false);
 
   // Text Processing
-  const [dictWord, setDictWord] = useState("");
+  interface DictEntry {
+    id: number;
+    from_text: string;
+    to_text: string;
+    case_sensitive: boolean;
+  }
+  const [dictFrom, setDictFrom] = useState("");
+  const [dictTo, setDictTo] = useState("");
+  const [dictCaseSensitive, setDictCaseSensitive] = useState(false);
+  const [dictEntries, setDictEntries] = useState<DictEntry[]>([]);
 
   // AI Providers
   const [showOpenAI, setShowOpenAI] = useState(false);
@@ -131,6 +140,9 @@ export default function Settings({
       .then(setAudioDevices)
       .catch(() => {}); // May fail in Docker/CI
     loadModels();
+    invoke<DictEntry[]>("list_dictionary")
+      .then(setDictEntries)
+      .catch(() => {});
   }, [loadSettings, loadModels]);
 
   // Poll download progress
@@ -254,21 +266,30 @@ export default function Settings({
     }
   }
 
-  function handleAddDictWord() {
-    if (!settings || !dictWord.trim()) return;
-    const word = dictWord.trim();
-    if (settings.personal_dictionary.includes(word)) return;
-    const updated = [...settings.personal_dictionary, word];
-    updateField("personal_dictionary", updated);
-    setDictWord("");
+  async function handleAddDictEntry() {
+    if (!dictFrom.trim() || !dictTo.trim()) return;
+    try {
+      const entry = await invoke<DictEntry>("add_dictionary_entry", {
+        fromText: dictFrom.trim(),
+        toText: dictTo.trim(),
+        caseSensitive: dictCaseSensitive,
+      });
+      setDictEntries((prev) => [...prev, entry]);
+      setDictFrom("");
+      setDictTo("");
+      setDictCaseSensitive(false);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
-  function handleRemoveDictWord(word: string) {
-    if (!settings) return;
-    updateField(
-      "personal_dictionary",
-      settings.personal_dictionary.filter((w) => w !== word)
-    );
+  async function handleRemoveDictEntry(id: number) {
+    try {
+      await invoke("remove_dictionary_entry", { id });
+      setDictEntries((prev) => prev.filter((e) => e.id !== id));
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   if (!settings) {
@@ -521,41 +542,71 @@ export default function Settings({
               />
               <span>Remove filler words (um, uh, like, you know) from transcriptions</span>
             </label>
+            <div style={styles.hint}>
+              Removes: um, uh, er, ah, like (filler), you know, I mean, sort of, kind of, basically, actually, literally
+            </div>
 
             <h2 style={{ ...styles.sectionTitle, marginTop: 24 }}>Personal Dictionary</h2>
             <div style={styles.hint}>
-              Add words that should always be recognized correctly (names, jargon, etc.)
+              Map misrecognized words to their correct form (e.g., "eye phone" → "iPhone")
             </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
               <input
                 type="text"
-                value={dictWord}
-                onChange={(e) => setDictWord(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAddDictWord()}
-                placeholder="Add a word..."
-                style={styles.input}
+                value={dictFrom}
+                onChange={(e) => setDictFrom(e.target.value)}
+                placeholder="From (wrong)..."
+                style={{ ...styles.input, minWidth: 120 }}
               />
-              <button onClick={handleAddDictWord} disabled={!dictWord.trim()} style={styles.actionBtn}>
+              <span style={{ color: "#999" }}>→</span>
+              <input
+                type="text"
+                value={dictTo}
+                onChange={(e) => setDictTo(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddDictEntry()}
+                placeholder="To (correct)..."
+                style={{ ...styles.input, minWidth: 120 }}
+              />
+              <label style={{ ...styles.checkboxLabel, fontSize: "0.8rem", whiteSpace: "nowrap" }}>
+                <input
+                  type="checkbox"
+                  checked={dictCaseSensitive}
+                  onChange={(e) => setDictCaseSensitive(e.target.checked)}
+                />
+                <span>Case-sensitive</span>
+              </label>
+              <button
+                onClick={handleAddDictEntry}
+                disabled={!dictFrom.trim() || !dictTo.trim()}
+                style={styles.actionBtn}
+              >
                 Add
               </button>
             </div>
-            {settings.personal_dictionary.length > 0 && (
-              <div style={styles.dictList}>
-                {settings.personal_dictionary.map((word) => (
-                  <span key={word} style={styles.dictChip}>
-                    {word}
+            {dictEntries.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                {dictEntries.map((entry) => (
+                  <div key={entry.id} style={styles.dictEntryRow}>
+                    <span style={{ flex: 1 }}>
+                      <span style={{ color: "#d32f2f" }}>{entry.from_text}</span>
+                      {" → "}
+                      <span style={{ color: "#2e7d32" }}>{entry.to_text}</span>
+                      {entry.case_sensitive && (
+                        <span style={{ fontSize: "0.75rem", color: "#888", marginLeft: 6 }}>(case-sensitive)</span>
+                      )}
+                    </span>
                     <button
-                      onClick={() => handleRemoveDictWord(word)}
+                      onClick={() => handleRemoveDictEntry(entry.id)}
                       style={styles.chipRemove}
                     >
                       x
                     </button>
-                  </span>
+                  </div>
                 ))}
               </div>
             )}
-            {settings.personal_dictionary.length === 0 && (
-              <div style={{ ...styles.hint, marginTop: 8 }}>No words added yet.</div>
+            {dictEntries.length === 0 && (
+              <div style={{ ...styles.hint, marginTop: 8 }}>No dictionary entries yet.</div>
             )}
           </div>
         )}
@@ -830,6 +881,14 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#e3f2fd",
     borderRadius: 16,
     fontSize: "0.85rem",
+  },
+  dictEntryRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 10px",
+    borderBottom: "1px solid #f0f0f0",
+    fontSize: "0.9rem",
   },
   chipRemove: {
     background: "none",
