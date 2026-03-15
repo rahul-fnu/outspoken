@@ -1,3 +1,6 @@
+
+
+```rust
 /// Audio preprocessing for improving transcription accuracy.
 /// Normalizes gain and trims silence before whisper inference.
 
@@ -24,7 +27,7 @@ fn rms(samples: &[f32]) -> f32 {
 ///
 /// Scales all samples proportionally and clamps to [-1.0, 1.0] to prevent clipping.
 /// Default target is -20 dBFS, which matches Whisper's training data range.
-pub fn normalize_gain(samples: &mut [f32], target_db: f32) {
+pub fn normalize_gain_rms(samples: &mut [f32], target_db: f32) {
     if samples.is_empty() {
         return;
     }
@@ -42,6 +45,32 @@ pub fn normalize_gain(samples: &mut [f32], target_db: f32) {
     for sample in samples.iter_mut() {
         *sample = (*sample * gain).clamp(-1.0, 1.0);
     }
+}
+
+/// Normalize audio gain to a target peak level.
+///
+/// Scales the audio so the peak amplitude reaches `target_peak` (default 0.95).
+/// Returns the original slice unchanged if the audio is silent (peak below `silence_threshold`).
+pub fn normalize_gain(audio: &[f32]) -> Vec<f32> {
+    normalize_gain_with_params(audio, 0.95, 1e-6)
+}
+
+fn normalize_gain_with_params(audio: &[f32], target_peak: f32, silence_threshold: f32) -> Vec<f32> {
+    if audio.is_empty() {
+        return Vec::new();
+    }
+
+    let peak = audio
+        .iter()
+        .map(|s| s.abs())
+        .fold(0.0f32, f32::max);
+
+    if peak < silence_threshold {
+        return audio.to_vec();
+    }
+
+    let gain = target_peak / peak;
+    audio.iter().map(|s| (s * gain).clamp(-1.0, 1.0)).collect()
 }
 
 /// Trim leading and trailing silence below `threshold_db` (in dBFS).
@@ -113,7 +142,7 @@ pub fn preprocess_audio(samples: &[f32]) -> Vec<f32> {
 
     // Then normalize gain to -20 dBFS.
     let mut normalized = trimmed.to_vec();
-    normalize_gain(&mut normalized, -20.0);
+    normalize_gain_rms(&mut normalized, -20.0);
 
     normalized
 }
@@ -133,7 +162,7 @@ mod tests {
         let rms_before = rms(&samples);
         assert!((linear_to_db(rms_before) - (-40.0)).abs() < 1.0);
 
-        normalize_gain(&mut samples, -20.0);
+        normalize_gain_rms(&mut samples, -20.0);
 
         let rms_after = rms(&samples);
         assert!((linear_to_db(rms_after) - (-20.0)).abs() < 1.0);
@@ -149,7 +178,7 @@ mod tests {
             .map(|i| (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / 16000.0).sin() * 0.95)
             .collect();
 
-        normalize_gain(&mut samples, -20.0);
+        normalize_gain_rms(&mut samples, -20.0);
 
         // Should be scaled down, all within range
         assert!(samples.iter().all(|&s| s >= -1.0 && s <= 1.0));
@@ -183,7 +212,7 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let mut empty: Vec<f32> = vec![];
-        normalize_gain(&mut empty, -20.0);
+        normalize_gain_rms(&mut empty, -20.0);
         assert!(empty.is_empty());
 
         let trimmed = trim_silence(&empty, -40.0);
@@ -196,8 +225,30 @@ mod tests {
         let mut samples = vec![0.001f32; 100];
         samples[50] = 0.5; // One louder sample
 
-        normalize_gain(&mut samples, -3.0);
+        normalize_gain_rms(&mut samples, -3.0);
 
         assert!(samples.iter().all(|&s| s >= -1.0 && s <= 1.0));
     }
+
+    #[test]
+    fn test_normalize_gain_silent() {
+        let silent = vec![0.0f32; 100];
+        let result = normalize_gain(&silent);
+        assert_eq!(result, silent);
+    }
+
+    #[test]
+    fn test_normalize_gain_scales_up() {
+        let audio = vec![0.1, -0.2, 0.15, -0.05];
+        let result = normalize_gain(&audio);
+        let peak = result.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!((peak - 0.95).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_normalize_gain_empty() {
+        let result = normalize_gain(&[]);
+        assert!(result.is_empty());
+    }
 }
+```
