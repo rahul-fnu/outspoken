@@ -1,6 +1,7 @@
 
 
 ```rust
+mod active_app;
 mod audio;
 mod audio_level;
 mod hotkey;
@@ -24,6 +25,11 @@ type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
 type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
 type SilenceConfigState = Arc<std::sync::Mutex<SilenceConfig>>;
 type TranscriptionServiceState = Arc<std::sync::Mutex<Option<TranscriptionService>>>;
+
+#[tauri::command]
+fn get_active_app() -> Result<active_app::ActiveAppInfo, String> {
+    active_app::get_active_app()
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -333,6 +339,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_active_app,
             greet,
             list_available_models,
             list_models,
