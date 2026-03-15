@@ -280,7 +280,7 @@ export default function Settings({
       const lang = selectedLanguage === "auto" ? null : selectedLanguage;
       await invoke("load_transcription_model", {
         modelName,
-        config: { language: lang, translate: false, thread_count: 4, strip_filler_words: settings?.strip_filler_words ?? false },
+        config: { language: lang, translate: false, thread_count: 4 },
       });
       onModelLoaded(modelName);
       updateField("active_model", modelName);
