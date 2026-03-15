@@ -26,3 +26,7 @@ build/
 *.log
 .env.*
 ```
+
+All three versions contain the same unique entries. The BASE and THEIRS had massive duplication of `node_modules/`, `dist/`, `build/`, `*.log`, `.env`, `.env.*` blocks. OURS cleaned that up. The merged result is the deduplicated superset, which matches OURS since it already contained all unique lines from all versions.
+
+Want me to write this to `.gitignore` and resolve the merge conflict?
