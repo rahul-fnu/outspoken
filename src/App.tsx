@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAudioLevel } from "./useAudioLevel";
 import Settings from "./components/Settings";
+import History from "./components/History";
 
 interface TranscriptionResult {
   text: string;
@@ -16,7 +17,7 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-type View = "main" | "settings";
+type View = "main" | "settings" | "history";
 
 function App() {
   const [view, setView] = useState<View>("main");
@@ -76,6 +77,20 @@ function App() {
         await invoke("set_tray_state", { state: "processing" });
         const result = await invoke<TranscriptionResult>("transcribe_recording", { audioData });
         setTranscription(result);
+        // Auto-save to history
+        if (result.text) {
+          let sourceApp = "";
+          try {
+            const appInfo = await invoke<{ name: string }>("get_active_app");
+            sourceApp = appInfo.name || "";
+          } catch { /* ignore */ }
+          await invoke("save_history_entry", {
+            text: result.text,
+            sourceApp,
+            durationSecs: recordingDuration,
+            language: result.language,
+          }).catch(() => {});
+        }
       } catch (e) {
         setRecordError(String(e));
       } finally {
@@ -124,9 +139,14 @@ function App() {
         {/* Header */}
         <div style={styles.header}>
           <h1 style={styles.title}>Outspoken</h1>
-          <button onClick={() => setView("settings")} style={styles.settingsBtn}>
-            Settings
-          </button>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <button onClick={() => setView("history")} style={styles.settingsBtn}>
+              History
+            </button>
+            <button onClick={() => setView("settings")} style={styles.settingsBtn}>
+              Settings
+            </button>
+          </div>
         </div>
 
         {/* Status bar */}
@@ -240,6 +260,11 @@ function App() {
         </div>
       </main>
     );
+  }
+
+  // --- History View ---
+  if (view === "history") {
+    return <History onBack={() => setView("main")} />;
   }
 
   // --- Settings View ---
