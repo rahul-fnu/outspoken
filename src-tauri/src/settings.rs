@@ -14,8 +14,6 @@ pub struct AppSettings {
     pub active_model: Option<String>,
     pub strip_filler_words: bool,
     pub personal_dictionary: Vec<String>,
-    pub openai_api_key: String,
-    pub anthropic_api_key: String,
 }
 
 impl Default for AppSettings {
@@ -30,8 +28,6 @@ impl Default for AppSettings {
             active_model: None,
             strip_filler_words: false,
             personal_dictionary: Vec::new(),
-            openai_api_key: String::new(),
-            anthropic_api_key: String::new(),
         }
     }
 }

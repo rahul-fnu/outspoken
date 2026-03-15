@@ -11,8 +11,8 @@ interface AppSettings {
   active_model: string | null;
   strip_filler_words: boolean;
   personal_dictionary: string[];
-  openai_api_key: string;
-  anthropic_api_key: string;
+  openai_api_key?: string;
+  anthropic_api_key?: string;
 }
 
 interface ModelInfo {
@@ -105,8 +105,27 @@ export default function Settings({
   const [dictEntries, setDictEntries] = useState<DictEntry[]>([]);
 
   // AI Providers
-  const [showOpenAI, setShowOpenAI] = useState(false);
-  const [showAnthropic, setShowAnthropic] = useState(false);
+  interface ApiKeyInfo {
+    provider: string;
+    is_set: boolean;
+    masked: string;
+  }
+  interface AiPrompt {
+    id: number;
+    name: string;
+    prompt: string;
+    is_default: boolean;
+    app_pattern: string | null;
+  }
+  const [apiKeys, setApiKeys] = useState<ApiKeyInfo[]>([]);
+  const [aiPrompts, setAiPrompts] = useState<AiPrompt[]>([]);
+  const [openaiKeyInput, setOpenaiKeyInput] = useState("");
+  const [anthropicKeyInput, setAnthropicKeyInput] = useState("");
+  const [keySaving, setKeySaving] = useState<string | null>(null);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [newPromptName, setNewPromptName] = useState("");
+  const [newPromptText, setNewPromptText] = useState("");
+  const [newPromptApp, setNewPromptApp] = useState("");
 
   const loadSettings = useCallback(async () => {
     try {
@@ -142,6 +161,12 @@ export default function Settings({
     loadModels();
     invoke<DictEntry[]>("list_dictionary")
       .then(setDictEntries)
+      .catch(() => {});
+    invoke<ApiKeyInfo[]>("list_api_keys")
+      .then(setApiKeys)
+      .catch(() => {});
+    invoke<AiPrompt[]>("list_ai_prompts")
+      .then(setAiPrompts)
       .catch(() => {});
   }, [loadSettings, loadModels]);
 
@@ -616,44 +641,202 @@ export default function Settings({
           <div>
             <h2 style={styles.sectionTitle}>AI Provider API Keys</h2>
             <div style={styles.hint}>
-              These keys enable AI-powered text enhancement features (Phase 2).
-              Keys are stored locally on your device.
+              Keys are validated before saving and stored encrypted on your device.
+              AI features work with either OpenAI or Anthropic — or both.
             </div>
+            {keyError && (
+              <div style={{ ...styles.error, marginTop: 8 }}>
+                {keyError}
+                <button onClick={() => setKeyError(null)} style={styles.dismissBtn}>x</button>
+              </div>
+            )}
 
+            {/* OpenAI */}
             <div style={{ marginTop: 16 }}>
               <label style={styles.fieldLabel}>OpenAI API Key</label>
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                <input
-                  type={showOpenAI ? "text" : "password"}
-                  value={settings.openai_api_key}
-                  onChange={(e) => updateField("openai_api_key", e.target.value)}
-                  placeholder="sk-..."
-                  style={{ ...styles.input, flex: 1 }}
-                />
-                <button
-                  onClick={() => setShowOpenAI(!showOpenAI)}
-                  style={styles.actionBtn}
-                >
-                  {showOpenAI ? "Hide" : "Show"}
-                </button>
-              </div>
+              {apiKeys.find((k) => k.provider === "openai")?.is_set ? (
+                <div style={{ display: "flex", gap: 8, marginTop: 4, alignItems: "center" }}>
+                  <span style={{ flex: 1, fontFamily: "monospace", color: "#4caf50" }}>
+                    {apiKeys.find((k) => k.provider === "openai")?.masked}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await invoke("delete_api_key", { provider: "openai" });
+                        const keys = await invoke<ApiKeyInfo[]>("list_api_keys");
+                        setApiKeys(keys);
+                      } catch (e) { setKeyError(String(e)); }
+                    }}
+                    style={styles.dangerBtn}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  <input
+                    type="password"
+                    value={openaiKeyInput}
+                    onChange={(e) => setOpenaiKeyInput(e.target.value)}
+                    placeholder="sk-..."
+                    style={{ ...styles.input, flex: 1 }}
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!openaiKeyInput.trim()) return;
+                      setKeySaving("openai");
+                      setKeyError(null);
+                      try {
+                        await invoke("save_api_key", { provider: "openai", key: openaiKeyInput });
+                        setOpenaiKeyInput("");
+                        const keys = await invoke<ApiKeyInfo[]>("list_api_keys");
+                        setApiKeys(keys);
+                      } catch (e) { setKeyError(String(e)); }
+                      setKeySaving(null);
+                    }}
+                    disabled={keySaving === "openai" || !openaiKeyInput.trim()}
+                    style={styles.actionBtn}
+                  >
+                    {keySaving === "openai" ? "Validating..." : "Save"}
+                  </button>
+                </div>
+              )}
             </div>
 
+            {/* Anthropic */}
             <div style={{ marginTop: 16 }}>
               <label style={styles.fieldLabel}>Anthropic API Key</label>
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              {apiKeys.find((k) => k.provider === "anthropic")?.is_set ? (
+                <div style={{ display: "flex", gap: 8, marginTop: 4, alignItems: "center" }}>
+                  <span style={{ flex: 1, fontFamily: "monospace", color: "#4caf50" }}>
+                    {apiKeys.find((k) => k.provider === "anthropic")?.masked}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await invoke("delete_api_key", { provider: "anthropic" });
+                        const keys = await invoke<ApiKeyInfo[]>("list_api_keys");
+                        setApiKeys(keys);
+                      } catch (e) { setKeyError(String(e)); }
+                    }}
+                    style={styles.dangerBtn}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  <input
+                    type="password"
+                    value={anthropicKeyInput}
+                    onChange={(e) => setAnthropicKeyInput(e.target.value)}
+                    placeholder="sk-ant-..."
+                    style={{ ...styles.input, flex: 1 }}
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!anthropicKeyInput.trim()) return;
+                      setKeySaving("anthropic");
+                      setKeyError(null);
+                      try {
+                        await invoke("save_api_key", { provider: "anthropic", key: anthropicKeyInput });
+                        setAnthropicKeyInput("");
+                        const keys = await invoke<ApiKeyInfo[]>("list_api_keys");
+                        setApiKeys(keys);
+                      } catch (e) { setKeyError(String(e)); }
+                      setKeySaving(null);
+                    }}
+                    disabled={keySaving === "anthropic" || !anthropicKeyInput.trim()}
+                    style={styles.actionBtn}
+                  >
+                    {keySaving === "anthropic" ? "Validating..." : "Save"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Prompts */}
+            <h2 style={{ ...styles.sectionTitle, marginTop: 24 }}>AI Prompts</h2>
+            <div style={styles.hint}>
+              Select a prompt when enhancing transcribed text. Default prompts are always available.
+            </div>
+            {aiPrompts.map((p) => (
+              <div key={p.id} style={{ ...styles.modelCard, marginTop: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <strong>{p.name}</strong>
+                    {p.is_default && (
+                      <span style={{ marginLeft: 8, fontSize: "0.75rem", color: "#888" }}>Built-in</span>
+                    )}
+                    {p.app_pattern && (
+                      <span style={{ marginLeft: 8, fontSize: "0.75rem", color: "#1976d2" }}>
+                        App: {p.app_pattern}
+                      </span>
+                    )}
+                  </div>
+                  {!p.is_default && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await invoke("delete_custom_prompt", { id: p.id });
+                          const prompts = await invoke<AiPrompt[]>("list_ai_prompts");
+                          setAiPrompts(prompts);
+                        } catch (e) { setKeyError(String(e)); }
+                      }}
+                      style={styles.chipRemove}
+                    >
+                      x
+                    </button>
+                  )}
+                </div>
+                <div style={{ ...styles.hint, marginTop: 4, fontSize: "0.8rem" }}>{p.prompt}</div>
+              </div>
+            ))}
+
+            <h3 style={{ fontSize: "0.95rem", marginTop: 16, marginBottom: 8 }}>Add Custom Prompt</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <input
+                type="text"
+                value={newPromptName}
+                onChange={(e) => setNewPromptName(e.target.value)}
+                placeholder="Prompt name (e.g. 'Make casual')"
+                style={styles.input}
+              />
+              <textarea
+                value={newPromptText}
+                onChange={(e) => setNewPromptText(e.target.value)}
+                placeholder="Prompt text (instructions for the AI)..."
+                rows={3}
+                style={{ ...styles.input, minHeight: 60, resize: "vertical" as const }}
+              />
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input
-                  type={showAnthropic ? "text" : "password"}
-                  value={settings.anthropic_api_key}
-                  onChange={(e) => updateField("anthropic_api_key", e.target.value)}
-                  placeholder="sk-ant-..."
+                  type="text"
+                  value={newPromptApp}
+                  onChange={(e) => setNewPromptApp(e.target.value)}
+                  placeholder="App pattern (optional, e.g. 'Slack')"
                   style={{ ...styles.input, flex: 1 }}
                 />
                 <button
-                  onClick={() => setShowAnthropic(!showAnthropic)}
+                  onClick={async () => {
+                    if (!newPromptName.trim() || !newPromptText.trim()) return;
+                    try {
+                      await invoke("save_custom_prompt", {
+                        name: newPromptName.trim(),
+                        prompt: newPromptText.trim(),
+                        appPattern: newPromptApp.trim() || null,
+                      });
+                      setNewPromptName("");
+                      setNewPromptText("");
+                      setNewPromptApp("");
+                      const prompts = await invoke<AiPrompt[]>("list_ai_prompts");
+                      setAiPrompts(prompts);
+                    } catch (e) { setKeyError(String(e)); }
+                  }}
+                  disabled={!newPromptName.trim() || !newPromptText.trim()}
                   style={styles.actionBtn}
                 >
-                  {showAnthropic ? "Hide" : "Show"}
+                  Add Prompt
                 </button>
               </div>
             </div>
