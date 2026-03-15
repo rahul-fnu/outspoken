@@ -1,4 +1,5 @@
 mod active_app;
+mod ai;
 mod audio;
 mod audio_level;
 mod history;
@@ -386,6 +387,58 @@ fn process_transcription_text(
     Ok(text_processing::process_text(&text, strip_fillers, &entries))
 }
 
+#[tauri::command]
+async fn save_api_key(provider: String, key: String) -> Result<(), String> {
+    // Validate key before saving
+    let valid = ai::validate_api_key(&provider, &key).await?;
+    if !valid {
+        return Err(format!("Invalid API key for {provider}"));
+    }
+    ai::save_api_key(&provider, &key)
+}
+
+#[tauri::command]
+fn delete_api_key(provider: String) -> Result<(), String> {
+    ai::delete_api_key(&provider)
+}
+
+#[tauri::command]
+async fn validate_api_key(provider: String, key: String) -> Result<bool, String> {
+    ai::validate_api_key(&provider, &key).await
+}
+
+#[tauri::command]
+fn list_api_keys() -> Result<Vec<ai::ApiKeyInfo>, String> {
+    ai::list_api_keys()
+}
+
+#[tauri::command]
+async fn process_ai_text(
+    app_handle: tauri::AppHandle,
+    request: ai::AiRequest,
+) -> Result<ai::AiResult, String> {
+    ai::process_ai_text(app_handle, request).await
+}
+
+#[tauri::command]
+fn list_ai_prompts() -> Result<Vec<ai::AiPrompt>, String> {
+    ai::list_prompts()
+}
+
+#[tauri::command]
+fn save_custom_prompt(
+    name: String,
+    prompt: String,
+    app_pattern: Option<String>,
+) -> Result<ai::AiPrompt, String> {
+    ai::save_custom_prompt(&name, &prompt, app_pattern.as_deref())
+}
+
+#[tauri::command]
+fn delete_custom_prompt(id: i64) -> Result<(), String> {
+    ai::delete_custom_prompt(id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -456,6 +509,14 @@ pub fn run() {
             remove_dictionary_entry,
             list_dictionary,
             process_transcription_text,
+            save_api_key,
+            delete_api_key,
+            validate_api_key,
+            list_api_keys,
+            process_ai_text,
+            list_ai_prompts,
+            save_custom_prompt,
+            delete_custom_prompt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
