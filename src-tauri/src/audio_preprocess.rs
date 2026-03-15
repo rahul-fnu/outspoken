@@ -1,6 +1,3 @@
-
-
-```rust
 /// Audio preprocessing for improving transcription accuracy.
 /// Normalizes gain and trims silence before whisper inference.
 
@@ -251,4 +248,3 @@ mod tests {
         assert!(result.is_empty());
     }
 }
-```

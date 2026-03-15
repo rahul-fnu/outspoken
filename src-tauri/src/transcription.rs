@@ -1,6 +1,3 @@
-
-
-```rust
 use std::path::Path;
 use std::sync::Arc;
 
@@ -325,4 +322,3 @@ fn strip_filler_words(text: &str) -> String {
     let ws_re = regex_lite::Regex::new(r"\s{2,}").unwrap();
     ws_re.replace_all(result.trim(), " ").to_string()
 }
-```

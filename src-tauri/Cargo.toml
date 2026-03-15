@@ -1,6 +1,3 @@
-
-
-```toml
 [package]
 name = "outspoken"
 version = "0.1.0"
@@ -59,4 +56,3 @@ desktop = ["tauri", "tauri-plugin-opener", "tauri-plugin-global-shortcut", "enig
 multilingual = []
 metal = ["whisper-rs/metal"]
 cuda = ["whisper-rs/cuda"]
-```
