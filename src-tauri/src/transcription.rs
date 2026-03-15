@@ -4,6 +4,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+use crate::audio_preprocess::normalize_gain;
+use crate::vad::VadSegmenter;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Segment {
     pub start_ms: i64,
@@ -29,6 +32,13 @@ pub struct TranscriptionConfig {
     pub thread_count: i32,
     /// If true, strip filler words from output.
     pub strip_filler_words: bool,
+    /// If true (default), use VAD to segment audio before transcription.
+    #[serde(default = "default_use_vad")]
+    pub use_vad: bool,
+}
+
+fn default_use_vad() -> bool {
+    true
 }
 
 impl Default for TranscriptionConfig {
@@ -38,6 +48,7 @@ impl Default for TranscriptionConfig {
             translate: false,
             thread_count: 4,
             strip_filler_words: false,
+            use_vad: true,
         }
     }
 }
@@ -61,6 +72,10 @@ impl TranscriptionService {
             ctx: Arc::new(ctx),
             config,
         })
+    }
+
+    pub fn config(&self) -> &TranscriptionConfig {
+        &self.config
     }
 
     pub fn transcribe(&self, audio_data: &[f32]) -> Result<TranscriptionResult, String> {
@@ -141,6 +156,95 @@ impl TranscriptionService {
             text: full_text,
             segments,
             language: detected_language,
+            duration_ms,
+        })
+    }
+
+    /// Transcribe audio using VAD to segment speech regions first.
+    ///
+    /// For each speech segment detected by VAD:
+    /// 1. Extract the audio slice
+    /// 2. Apply gain normalization
+    /// 3. Transcribe with Whisper
+    /// 4. Offset timestamps to be relative to original audio
+    ///
+    /// If VAD finds no speech, returns an empty result (no hallucination).
+    pub fn transcribe_with_vad(
+        &self,
+        audio: &[f32],
+        vad: &mut VadSegmenter,
+    ) -> Result<TranscriptionResult, String> {
+        let start = std::time::Instant::now();
+
+        // Run VAD segmentation
+        let speech_segments = vad.segment(audio)?;
+
+        // No speech detected — return empty result
+        if speech_segments.is_empty() {
+            return Ok(TranscriptionResult {
+                text: String::new(),
+                segments: Vec::new(),
+                language: self
+                    .config
+                    .language
+                    .clone()
+                    .unwrap_or_else(|| "unknown".into()),
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+
+        let sample_rate = 16000.0f64; // Whisper expects 16kHz
+        let mut all_segments = Vec::new();
+        let mut all_text = String::new();
+        let mut detected_language = None;
+
+        for speech in &speech_segments {
+            let end_idx = speech.end.min(audio.len());
+            if speech.start >= end_idx {
+                continue;
+            }
+
+            let segment_audio = &audio[speech.start..end_idx];
+
+            // Apply gain normalization to the segment
+            let normalized = normalize_gain(segment_audio);
+
+            // Transcribe the normalized segment
+            let seg_result = self.transcribe(&normalized)?;
+
+            // Store detected language from first segment with speech
+            if detected_language.is_none() && !seg_result.text.is_empty() {
+                detected_language = Some(seg_result.language.clone());
+            }
+
+            // Offset timestamps to be relative to original audio
+            let offset_ms = (speech.start as f64 / sample_rate * 1000.0) as i64;
+
+            for seg in seg_result.segments {
+                let adjusted = Segment {
+                    start_ms: seg.start_ms + offset_ms,
+                    end_ms: seg.end_ms + offset_ms,
+                    text: seg.text.clone(),
+                };
+
+                if !adjusted.text.is_empty() {
+                    if !all_text.is_empty() {
+                        all_text.push(' ');
+                    }
+                    all_text.push_str(&adjusted.text);
+                    all_segments.push(adjusted);
+                }
+            }
+        }
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        Ok(TranscriptionResult {
+            text: all_text,
+            segments: all_segments,
+            language: detected_language
+                .or_else(|| self.config.language.clone())
+                .unwrap_or_else(|| "unknown".into()),
             duration_ms,
         })
     }

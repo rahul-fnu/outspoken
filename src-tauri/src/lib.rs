@@ -1,10 +1,8 @@
-
-
-```rust
 mod active_app;
 mod ai;
 mod audio;
 mod audio_level;
+mod audio_preprocess;
 mod history;
 mod hotkey;
 mod models;
@@ -13,6 +11,7 @@ mod text_insert;
 mod text_processing;
 mod transcription;
 mod tray;
+mod vad;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -30,6 +29,7 @@ type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
 type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
 type SilenceConfigState = Arc<std::sync::Mutex<SilenceConfig>>;
 type TranscriptionServiceState = Arc<std::sync::Mutex<Option<TranscriptionService>>>;
+type VadSegmenterState = Arc<std::sync::Mutex<Option<vad::VadSegmenter>>>;
 
 #[tauri::command]
 fn get_active_app() -> Result<active_app::ActiveAppInfo, String> {
@@ -232,6 +232,7 @@ fn list_supported_languages() -> Vec<SupportedLanguage> {
 async fn transcribe_recording(
     audio_data: Vec<f32>,
     service_state: tauri::State<'_, TranscriptionServiceState>,
+    vad_state: tauri::State<'_, VadSegmenterState>,
 ) -> Result<TranscriptionResult, String> {
     let service = {
         let state = service_state
@@ -243,11 +244,41 @@ async fn transcribe_recording(
             .clone()
     };
 
-    let result = tokio::task::spawn_blocking(move || service.transcribe(&audio_data))
+    let use_vad = service.config().use_vad;
+
+    if use_vad {
+        // Lazily initialize VadSegmenter on first use
+        {
+            let mut vad_lock = vad_state
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?;
+            if vad_lock.is_none() {
+                *vad_lock = Some(vad::VadSegmenter::new()?);
+            }
+        }
+
+        let vad_state_clone = vad_state.inner().clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            let mut vad_lock = vad_state_clone
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?;
+            let vad = vad_lock
+                .as_mut()
+                .ok_or("VAD segmenter not initialized")?;
+            service.transcribe_with_vad(&audio_data, vad)
+        })
         .await
         .map_err(|e| format!("Task join error: {e}"))??;
 
-    Ok(result)
+        Ok(result)
+    } else {
+        let result = tokio::task::spawn_blocking(move || service.transcribe(&audio_data))
+            .await
+            .map_err(|e| format!("Task join error: {e}"))??;
+
+        Ok(result)
+    }
 }
 
 #[tauri::command]
@@ -483,6 +514,8 @@ pub fn run() {
         Arc::new(std::sync::Mutex::new(SilenceConfig::default()));
     let transcription_service: TranscriptionServiceState =
         Arc::new(std::sync::Mutex::new(None));
+    let vad_segmenter: VadSegmenterState =
+        Arc::new(std::sync::Mutex::new(None));
     let tray_recording_state: TrayRecordingState =
         Arc::new(std::sync::atomic::AtomicU8::new(TrayState::Idle as u8));
     let hotkey_config: HotkeyConfigState =
@@ -499,6 +532,7 @@ pub fn run() {
         .manage(selected_device)
         .manage(silence_config)
         .manage(transcription_service)
+        .manage(vad_segmenter)
         .manage(tray_recording_state)
         .manage(hotkey_config)
         .manage(app_settings)
@@ -557,4 +591,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-```
