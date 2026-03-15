@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+use crate::vad;
+
 const HF_BASE_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
@@ -73,6 +75,12 @@ pub fn available_models() -> Vec<ModelInfo> {
             filename: "ggml-medium.bin".into(),
             size_bytes: 1_500_000_000,
             description: "Medium (~1.5GB) - Slow, highest accuracy".into(),
+        },
+        ModelInfo {
+            name: "silero-vad".into(),
+            filename: vad::VAD_MODEL_FILENAME.into(),
+            size_bytes: vad::VAD_MODEL_SIZE,
+            description: "Silero VAD (~2MB) - Voice activity detection".into(),
         },
     ]
 }

@@ -35,6 +35,7 @@ base64 = "0.22"
 tauri-plugin-global-shortcut = "2"
 enigo = "0.2"
 arboard = "3"
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["ndarray"] }
 
 [features]
 default = []
