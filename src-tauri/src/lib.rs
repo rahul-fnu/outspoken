@@ -1,6 +1,3 @@
-
-
-```rust
 mod active_app;
 mod ai;
 mod audio;
@@ -34,11 +31,6 @@ type TranscriptionServiceState = Arc<std::sync::Mutex<Option<TranscriptionServic
 #[tauri::command]
 fn get_active_app() -> Result<active_app::ActiveAppInfo, String> {
     active_app::get_active_app()
-}
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to Outspoken.", name)
 }
 
 #[tauri::command]
@@ -512,7 +504,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_active_app,
-            greet,
             list_available_models,
             list_models,
             download_model,
@@ -557,4 +548,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-```
