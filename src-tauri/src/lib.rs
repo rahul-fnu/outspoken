@@ -36,11 +36,6 @@ fn get_active_app() -> Result<active_app::ActiveAppInfo, String> {
 }
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to Outspoken.", name)
-}
-
-#[tauri::command]
 fn list_available_models() -> Vec<models::ModelInfo> {
     models::available_models()
 }
@@ -523,7 +518,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_active_app,
-            greet,
             list_available_models,
             list_models,
             download_model,
