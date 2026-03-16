@@ -103,6 +103,21 @@ function App() {
         } catch {
           // If post-processing fails, use raw text
         }
+        // Detect active app and apply format profile before pasting
+        let sourceApp = "";
+        try {
+          const appInfo = await invoke<{ name: string }>("get_active_app");
+          sourceApp = appInfo.name || "";
+        } catch { /* ignore */ }
+        if (result.text && sourceApp) {
+          try {
+            const formatted = await invoke<string>("apply_format_profile", {
+              text: result.text,
+              appName: sourceApp,
+            });
+            result.text = formatted;
+          } catch { /* ignore formatting errors, use unformatted text */ }
+        }
         setTranscription(result);
         // Paste text into the previously active app
         if (result.text) {
@@ -110,11 +125,6 @@ function App() {
         }
         // Auto-save to history
         if (result.text) {
-          let sourceApp = "";
-          try {
-            const appInfo = await invoke<{ name: string }>("get_active_app");
-            sourceApp = appInfo.name || "";
-          } catch { /* ignore */ }
           await invoke("save_transcription", {
             result: {
               text: result.text,
