@@ -194,7 +194,7 @@ fn stop_recording(
         .is_recording
         .store(false, std::sync::atomic::Ordering::Relaxed);
 
-    // Extract the buffer. The stream will be dropped when RecordingState is dropped.
+    // Extract the buffer. The stream thread stops when is_recording becomes false.
     let buffer = recording
         .buffer
         .lock()
