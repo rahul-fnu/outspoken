@@ -1,0 +1,11 @@
+The CI build is failing on this branch. Here are the error logs:
+
+.github:51: Process completed with exit code 101.
+.github:51: Process completed with exit code 101.
+.github:95: Process completed with exit code 1.
+
+Fix the build errors. Rules:
+- Read the failing source files before making changes
+- Fix the actual errors shown above — do not change tests or disable checks
+- Make minimal changes to fix the build
+- Stage your changes with git add
