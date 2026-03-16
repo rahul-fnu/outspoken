@@ -288,7 +288,8 @@ async fn transcribe_streaming_chunk(
 ) -> Result<TranscriptionResult, String> {
     // Snapshot the current recording buffer without stopping the recording.
     let audio_data = {
-        let state = audio_state
+        let arc = (*audio_state).clone();
+        let state = arc
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
         let recording = state
@@ -311,7 +312,8 @@ async fn transcribe_streaming_chunk(
     }
 
     let service = {
-        let state = service_state
+        let arc = (*service_state).clone();
+        let state = arc
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
         state
