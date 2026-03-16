@@ -665,7 +665,7 @@ pub fn run() {
             }
 
             // Pre-load whisper model in background thread to avoid cold-start delay
-            let svc_state: tauri::State<'_, TranscriptionServiceState> = app.handle().state();
+            let svc_state: tauri::State<'_, TranscriptionServiceState> = app.state();
             let svc_arc = svc_state.inner().clone();
             std::thread::spawn(move || {
                 let downloaded = match models::list_downloaded_models() {
