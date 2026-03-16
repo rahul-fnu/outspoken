@@ -50,7 +50,7 @@ interface AudioDeviceInfo {
   is_default: boolean;
 }
 
-type SettingsTab = "general" | "recording" | "models" | "text" | "ai" | "about";
+type SettingsTab = "general" | "recording" | "models" | "text" | "formatting" | "ai" | "about";
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
@@ -128,6 +128,15 @@ export default function Settings({
   const [newPromptText, setNewPromptText] = useState("");
   const [newPromptApp, setNewPromptApp] = useState("");
 
+  // Formatting profiles
+  interface FormatProfileMapping {
+    app_pattern: string;
+    profile: string;
+  }
+  const [formatProfiles, setFormatProfiles] = useState<FormatProfileMapping[]>([]);
+  const [newFormatApp, setNewFormatApp] = useState("");
+  const [newFormatProfile, setNewFormatProfile] = useState("casual");
+
   const loadSettings = useCallback(async () => {
     try {
       const s = await invoke<AppSettings>("get_settings");
@@ -168,6 +177,9 @@ export default function Settings({
       .catch(() => {});
     invoke<AiPrompt[]>("list_ai_prompts")
       .then(setAiPrompts)
+      .catch(() => {});
+    invoke<FormatProfileMapping[]>("list_format_profiles")
+      .then(setFormatProfiles)
       .catch(() => {});
   }, [loadSettings, loadModels]);
 
@@ -337,6 +349,7 @@ export default function Settings({
     { id: "recording", label: "Recording" },
     { id: "models", label: "Models" },
     { id: "text", label: "Text Processing" },
+    { id: "formatting", label: "Formatting" },
     { id: "ai", label: "AI Providers" },
     { id: "about", label: "About" },
   ];
@@ -634,6 +647,93 @@ export default function Settings({
             {dictEntries.length === 0 && (
               <div style={{ ...styles.hint, marginTop: 8 }}>No dictionary entries yet.</div>
             )}
+          </div>
+        )}
+
+        {/* ===== FORMATTING ===== */}
+        {tab === "formatting" && (
+          <div>
+            <h2 style={styles.sectionTitle}>Format Profiles</h2>
+            <div style={styles.hint}>
+              Text is automatically formatted based on the active app when dictating.
+              <strong> casual</strong>: lowercase, no trailing period.
+              <strong> professional</strong>: capitalized, ends with period.
+              <strong> default</strong>: no changes.
+            </div>
+            <div style={{ marginTop: 12 }}>
+              {formatProfiles.map((mapping) => (
+                <div key={mapping.app_pattern} style={styles.dictEntryRow}>
+                  <span style={{ flex: 1 }}>
+                    <strong>{mapping.app_pattern}</strong>
+                    {" → "}
+                    <span style={{ color: mapping.profile === "casual" ? "#1976d2" : mapping.profile === "professional" ? "#2e7d32" : "#888" }}>
+                      {mapping.profile}
+                    </span>
+                  </span>
+                  <select
+                    value={mapping.profile}
+                    onChange={async (e) => {
+                      const profile = e.target.value;
+                      try {
+                        await invoke("set_format_profile_override", {
+                          appPattern: mapping.app_pattern,
+                          profile,
+                        });
+                        const profiles = await invoke<FormatProfileMapping[]>("list_format_profiles");
+                        setFormatProfiles(profiles);
+                      } catch (err) {
+                        setError(String(err));
+                      }
+                    }}
+                    style={{ ...styles.select, minWidth: 120 }}
+                  >
+                    <option value="casual">casual</option>
+                    <option value="professional">professional</option>
+                    <option value="default">default</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            <h3 style={{ fontSize: "0.95rem", marginTop: 16, marginBottom: 8 }}>Add App Mapping</h3>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="text"
+                value={newFormatApp}
+                onChange={(e) => setNewFormatApp(e.target.value)}
+                placeholder="App name (e.g. Notion)"
+                style={{ ...styles.input, minWidth: 150 }}
+              />
+              <select
+                value={newFormatProfile}
+                onChange={(e) => setNewFormatProfile(e.target.value)}
+                style={{ ...styles.select, minWidth: 120 }}
+              >
+                <option value="casual">casual</option>
+                <option value="professional">professional</option>
+                <option value="default">default</option>
+              </select>
+              <button
+                onClick={async () => {
+                  if (!newFormatApp.trim()) return;
+                  try {
+                    await invoke("set_format_profile_override", {
+                      appPattern: newFormatApp.trim(),
+                      profile: newFormatProfile,
+                    });
+                    setNewFormatApp("");
+                    const profiles = await invoke<FormatProfileMapping[]>("list_format_profiles");
+                    setFormatProfiles(profiles);
+                  } catch (err) {
+                    setError(String(err));
+                  }
+                }}
+                disabled={!newFormatApp.trim()}
+                style={styles.actionBtn}
+              >
+                Add
+              </button>
+            </div>
           </div>
         )}
 
