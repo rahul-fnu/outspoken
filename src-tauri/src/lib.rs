@@ -466,7 +466,7 @@ fn process_transcription_text(
     strip_fillers: bool,
 ) -> Result<String, String> {
     let entries = text_processing::list_entries()?;
-    Ok(text_processing::process_text(&text, strip_fillers, &entries))
+    Ok(text_processing::process_text(&text, true, strip_fillers, &entries))
 }
 
 #[cfg(feature = "desktop")]
