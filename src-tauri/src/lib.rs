@@ -282,6 +282,53 @@ async fn transcribe_recording(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+async fn transcribe_streaming_chunk(
+    audio_state: tauri::State<'_, AudioState>,
+    service_state: tauri::State<'_, TranscriptionServiceState>,
+) -> Result<TranscriptionResult, String> {
+    // Snapshot the current recording buffer without stopping the recording.
+    let audio_data = {
+        let state = audio_state
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        let recording = state
+            .as_ref()
+            .ok_or("Not currently recording")?;
+        recording
+            .buffer
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?
+            .clone()
+    };
+
+    if audio_data.is_empty() {
+        return Ok(TranscriptionResult {
+            text: String::new(),
+            segments: Vec::new(),
+            language: String::new(),
+            duration_ms: 0,
+        });
+    }
+
+    let service = {
+        let state = service_state
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        state
+            .as_ref()
+            .ok_or("No transcription model loaded.")?
+            .clone()
+    };
+
+    let result = tokio::task::spawn_blocking(move || service.transcribe(&audio_data))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))??;
+
+    Ok(result)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn set_tray_state(
     app_handle: tauri::AppHandle,
     state: String,
@@ -583,6 +630,7 @@ pub fn run() {
             set_silence_config,
             load_transcription_model,
             transcribe_recording,
+            transcribe_streaming_chunk,
             list_supported_languages,
             set_tray_state,
             insert_text,

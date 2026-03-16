@@ -32,6 +32,9 @@ function App() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [copied, setCopied] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [streamingText, setStreamingText] = useState<string>("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const streamingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Model & language state (shared with settings)
   const [activeModel, setActiveModel] = useState<string | null>(null);
@@ -78,6 +81,36 @@ function App() {
     };
   }, [isRecording]);
 
+  // Streaming transcription during recording
+  useEffect(() => {
+    if (isRecording) {
+      setStreamingText("");
+      setIsStreaming(false);
+      streamingIntervalRef.current = setInterval(async () => {
+        try {
+          setIsStreaming(true);
+          const result = await invoke<TranscriptionResult>("transcribe_streaming_chunk");
+          if (result.text) {
+            setStreamingText(result.text);
+          }
+        } catch {
+          // Streaming chunk failed — ignore and retry next interval
+        }
+      }, 3000);
+    } else {
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+      setIsStreaming(false);
+    }
+    return () => {
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+      }
+    };
+  }, [isRecording]);
+
   // Ref for toggleRecording so callbacks/effects can call it without stale closures
   const toggleRecordingRef = useRef<() => void>(() => {});
 
@@ -103,6 +136,7 @@ function App() {
         } catch {
           // If post-processing fails, use raw text
         }
+        setStreamingText("");
         setTranscription(result);
         // Paste text into the previously active app
         if (result.text) {
@@ -296,6 +330,13 @@ function App() {
           <div style={styles.transcriptionBox}>
             {transcription?.text ? (
               <p style={styles.transcriptionText}>{transcription.text}</p>
+            ) : isRecording && streamingText ? (
+              <div>
+                <p style={styles.transcriptionText}>{streamingText}</p>
+                {isStreaming && (
+                  <span style={styles.streamingIndicator}>Streaming...</span>
+                )}
+              </div>
             ) : (
               <p style={styles.transcriptionPlaceholder}>
                 {isRecording
@@ -506,6 +547,13 @@ const styles: Record<string, React.CSSProperties> = {
   transcriptionPlaceholder: {
     margin: 0,
     color: "#aaa",
+    fontStyle: "italic",
+  },
+  streamingIndicator: {
+    display: "inline-block",
+    fontSize: "0.75rem",
+    color: "#1976d2",
+    marginTop: 8,
     fontStyle: "italic",
   },
   transcriptionMeta: {
