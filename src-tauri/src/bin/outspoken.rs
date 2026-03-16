@@ -189,7 +189,7 @@ fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
     }
 
     // Auto-download if not found
-    eprintln!("Model '{model_name}' not found locally, downloading...");
+    eprintln!("Model '{model_name}' not found. Downloading... (use `outspoken config models` to see available models)");
     let model = download_model_with_progress(model_name)?;
     eprintln!("Download complete.");
     Ok(PathBuf::from(model.path))
@@ -227,13 +227,20 @@ fn run_dictate(
         let stream_buffer = recording.buffer.clone();
         let stream_service = load_service(model)?;
         std::thread::spawn(move || {
+            let mut last_transcribed_len: usize = 0;
+            let mut full_text = String::new();
             while stream_running.load(Ordering::SeqCst) {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 if !stream_running.load(Ordering::SeqCst) {
                     break;
                 }
-                let snapshot = match stream_buffer.lock() {
-                    Ok(buf) => buf.clone(),
+                let (snapshot, new_len) = match stream_buffer.lock() {
+                    Ok(buf) => {
+                        if buf.len() <= last_transcribed_len {
+                            continue;
+                        }
+                        (buf[last_transcribed_len..].to_vec(), buf.len())
+                    }
                     Err(_) => continue,
                 };
                 if snapshot.is_empty() {
@@ -242,10 +249,15 @@ fn run_dictate(
                 if let Ok(result) = stream_service.transcribe(&snapshot) {
                     let text = result.text.trim();
                     if !text.is_empty() {
-                        eprint!("\r\x1b[2K{}", text);
+                        if !full_text.is_empty() {
+                            full_text.push(' ');
+                        }
+                        full_text.push_str(text);
+                        eprint!("\r\x1b[2K{}", full_text);
                         let _ = std::io::stderr().flush();
                     }
                 }
+                last_transcribed_len = new_len;
             }
         });
     }
@@ -267,11 +279,11 @@ fn run_dictate(
     let buffer = recording
         .buffer
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?
+        .map_err(|_| "Internal error — please report this bug".to_string())?
         .clone();
 
     if buffer.is_empty() {
-        return Err("No audio recorded".into());
+        return Err("No audio recorded. Check that your microphone is connected and permissions are granted. Run `outspoken config devices` to list available devices.".into());
     }
 
     eprintln!("Transcribing...");
@@ -344,7 +356,7 @@ fn run_listen(
             let buf = recording
                 .buffer
                 .lock()
-                .map_err(|e| format!("Lock error: {e}"))?;
+                .map_err(|_| "Internal error — please report this bug".to_string())?;
 
             if buf.len() < 16000 {
                 continue;
@@ -393,7 +405,7 @@ fn run_listen(
         let buffer = recording
             .buffer
             .lock()
-            .map_err(|e| format!("Lock error: {e}"))?
+            .map_err(|_| "Internal error — please report this bug".to_string())?
             .clone();
 
         if buffer.is_empty() {
