@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -42,6 +43,10 @@ enum Commands {
         /// Audio input device name
         #[arg(long)]
         device: Option<String>,
+
+        /// Stream partial transcriptions to stderr during recording
+        #[arg(long)]
+        stream: bool,
     },
 
     /// Continuous mode - transcribe each utterance as a new line
@@ -123,8 +128,9 @@ fn main() {
             no_vad,
             no_corrections: _,
             device,
+            stream,
         } => {
-            if let Err(e) = run_dictate(&model, copy, json, no_vad, &device) {
+            if let Err(e) = run_dictate(&model, copy, json, no_vad, &device, stream) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
@@ -209,6 +215,7 @@ fn run_dictate(
     json: bool,
     no_vad: bool,
     device: &Option<String>,
+    stream: bool,
 ) -> Result<(), String> {
     let service = load_service(model)?;
 
@@ -223,9 +230,42 @@ fn run_dictate(
     eprintln!("Recording... press Ctrl+C to stop and transcribe.");
     let recording = audio::start_capture(device, None)?;
 
+    if stream {
+        let stream_running = running.clone();
+        let stream_buffer = recording.buffer.clone();
+        let stream_service = load_service(model)?;
+        std::thread::spawn(move || {
+            while stream_running.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if !stream_running.load(Ordering::SeqCst) {
+                    break;
+                }
+                let snapshot = match stream_buffer.lock() {
+                    Ok(buf) => buf.clone(),
+                    Err(_) => continue,
+                };
+                if snapshot.is_empty() {
+                    continue;
+                }
+                if let Ok(result) = stream_service.transcribe(&snapshot) {
+                    let text = result.text.trim();
+                    if !text.is_empty() {
+                        eprint!("\r\x1b[2K{}", text);
+                        let _ = std::io::stderr().flush();
+                    }
+                }
+            }
+        });
+    }
+
     // Wait for Ctrl+C
     while running.load(Ordering::SeqCst) {
         std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    if stream {
+        eprint!("\r\x1b[2K");
+        let _ = std::io::stderr().flush();
     }
 
     // Stop recording
