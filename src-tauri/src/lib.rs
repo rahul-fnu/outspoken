@@ -282,6 +282,65 @@ async fn transcribe_recording(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+async fn transcribe_streaming_chunk(
+    audio_state: tauri::State<'_, AudioState>,
+    service_state: tauri::State<'_, TranscriptionServiceState>,
+) -> Result<TranscriptionResult, String> {
+    // Extract everything we need synchronously before any await points.
+    // This avoids lifetime/Send issues with MutexGuard holding non-Send types.
+    let audio_arc = audio_state.inner().clone();
+    let service_arc = service_state.inner().clone();
+
+    let (audio_data, service) = snapshot_for_streaming(audio_arc, service_arc)?;
+
+    if audio_data.is_empty() {
+        return Ok(TranscriptionResult {
+            text: String::new(),
+            segments: Vec::new(),
+            language: String::new(),
+            duration_ms: 0,
+        });
+    }
+
+    let result = tokio::task::spawn_blocking(move || service.transcribe(&audio_data))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))??;
+
+    Ok(result)
+}
+
+/// Synchronous helper to snapshot audio buffer and clone transcription service.
+/// Kept separate so no MutexGuard lives across async boundaries.
+#[cfg(feature = "desktop")]
+fn snapshot_for_streaming(
+    audio_arc: AudioState,
+    service_arc: TranscriptionServiceState,
+) -> Result<(Vec<f32>, TranscriptionService), String> {
+    let audio_data = {
+        let state = audio_arc.lock().map_err(|e| format!("Lock error: {e}"))?;
+        match state.as_ref() {
+            Some(recording) => recording
+                .buffer
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?
+                .clone(),
+            None => return Err("Not currently recording".into()),
+        }
+    };
+
+    let service = {
+        let state = service_arc.lock().map_err(|e| format!("Lock error: {e}"))?;
+        state
+            .as_ref()
+            .ok_or("No transcription model loaded.")?
+            .clone()
+    };
+
+    Ok((audio_data, service))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn set_tray_state(
     app_handle: tauri::AppHandle,
     state: String,
@@ -614,6 +673,7 @@ pub fn run() {
             set_silence_config,
             load_transcription_model,
             transcribe_recording,
+            transcribe_streaming_chunk,
             list_supported_languages,
             set_tray_state,
             insert_text,

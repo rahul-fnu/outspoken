@@ -13,7 +13,7 @@ interface AppSettings {
   personal_dictionary: string[];
   openai_api_key?: string;
   anthropic_api_key?: string;
-  launch_at_login: boolean;
+  auto_polish_enabled: boolean;
 }
 
 interface ModelInfo {
@@ -400,24 +400,12 @@ export default function Settings({
                 : `Manual selection: ${selectedLanguage}`}
             </div>
 
-            <h2 style={{ ...styles.sectionTitle, marginTop: 24 }}>Launch at Login</h2>
+            <h2 style={{ ...styles.sectionTitle, marginTop: 24 }}>Auto-start at Login</h2>
             <label style={styles.checkboxLabel}>
               <input
                 type="checkbox"
-                checked={settings.launch_at_login}
-                onChange={async (e) => {
-                  const enabled = e.target.checked;
-                  try {
-                    if (enabled) {
-                      await invoke("enable_autostart");
-                    } else {
-                      await invoke("disable_autostart");
-                    }
-                    updateField("launch_at_login", enabled);
-                  } catch (err) {
-                    setError(String(err));
-                  }
-                }}
+                checked={settings.auto_start}
+                onChange={(e) => updateField("auto_start", e.target.checked)}
               />
               <span>Launch Outspoken automatically when you log in</span>
             </label>
@@ -766,6 +754,21 @@ export default function Settings({
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* Auto-polish toggle */}
+            <h2 style={{ ...styles.sectionTitle, marginTop: 24 }}>Auto-polish with AI</h2>
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={settings.auto_polish_enabled}
+                onChange={(e) => updateField("auto_polish_enabled", e.target.checked)}
+              />
+              <span>Automatically polish transcriptions with AI after dictation</span>
+            </label>
+            <div style={styles.hint}>
+              When enabled and an API key is configured, transcribed text will be
+              automatically sent through AI for polishing before pasting.
             </div>
 
             {/* Prompts */}
