@@ -10,7 +10,7 @@ const MAX_PASTE_LEN: usize = 100_000;
 
 /// Insert text into the active application using clipboard paste.
 ///
-/// Flow: save clipboard → copy text → simulate Cmd/Ctrl+V → restore clipboard.
+/// Flow: set clipboard → simulate Cmd/Ctrl+V.
 /// Falls back to character-by-character typing if paste simulation fails.
 pub fn insert_text(text: &str) -> Result<(), String> {
     if text.is_empty() {
@@ -33,32 +33,19 @@ pub fn insert_text(text: &str) -> Result<(), String> {
     }
 }
 
-/// Insert text by saving/restoring clipboard and simulating Ctrl/Cmd+V.
+/// Insert text by setting clipboard and simulating Ctrl/Cmd+V.
 fn insert_via_paste(text: &str) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard init failed: {e}"))?;
 
-    // Save current clipboard contents
-    let saved_text = clipboard.get_text().ok();
-
-    // Set our text on the clipboard
     clipboard
         .set_text(text)
         .map_err(|e| format!("Failed to set clipboard: {e}"))?;
 
     thread::sleep(STEP_DELAY);
 
-    // Simulate Cmd+V (macOS) or Ctrl+V (Windows/Linux)
     let result = simulate_paste();
 
-    // Wait for the paste to be processed by the target app
     thread::sleep(STEP_DELAY);
-
-    // Restore original clipboard (best-effort)
-    if let Some(saved) = saved_text {
-        // Small delay before restoring to let paste complete
-        thread::sleep(STEP_DELAY);
-        let _ = clipboard.set_text(saved);
-    }
 
     result
 }
