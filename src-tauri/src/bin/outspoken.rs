@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use outspoken_lib::ai;
 use outspoken_lib::audio;
 use outspoken_lib::models;
 use outspoken_lib::transcription::{TranscriptionConfig, TranscriptionService};
@@ -42,6 +43,18 @@ enum Commands {
         /// Audio input device name
         #[arg(long)]
         device: Option<String>,
+
+        /// Polish transcription through an AI provider
+        #[arg(long)]
+        polish: bool,
+
+        /// AI provider for polishing (default: "anthropic")
+        #[arg(long, default_value = "anthropic")]
+        polish_provider: String,
+
+        /// Prompt for AI polishing
+        #[arg(long, default_value = "Clean up grammar, fix any transcription errors, and improve clarity. Keep the same meaning and tone. Return only the corrected text.")]
+        polish_prompt: String,
     },
 
     /// Continuous mode - transcribe each utterance as a new line
@@ -73,6 +86,18 @@ enum Commands {
         /// Seconds of silence before finalizing utterance
         #[arg(long, default_value = "2")]
         silence_timeout: f32,
+
+        /// Polish transcription through an AI provider
+        #[arg(long)]
+        polish: bool,
+
+        /// AI provider for polishing (default: "anthropic")
+        #[arg(long, default_value = "anthropic")]
+        polish_provider: String,
+
+        /// Prompt for AI polishing
+        #[arg(long, default_value = "Clean up grammar, fix any transcription errors, and improve clarity. Keep the same meaning and tone. Return only the corrected text.")]
+        polish_prompt: String,
     },
 
     /// Manage configuration: models, devices
@@ -123,8 +148,11 @@ fn main() {
             no_vad,
             no_corrections: _,
             device,
+            polish,
+            polish_provider,
+            polish_prompt,
         } => {
-            if let Err(e) = run_dictate(&model, copy, json, no_vad, &device) {
+            if let Err(e) = run_dictate(&model, copy, json, no_vad, &device, polish, &polish_provider, &polish_prompt) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
@@ -137,8 +165,11 @@ fn main() {
             no_corrections: _,
             device,
             silence_timeout,
+            polish,
+            polish_provider,
+            polish_prompt,
         } => {
-            if let Err(e) = run_listen(&model, copy, json, no_vad, &device, silence_timeout) {
+            if let Err(e) = run_listen(&model, copy, json, no_vad, &device, silence_timeout, polish, &polish_provider, &polish_prompt) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
@@ -201,6 +232,9 @@ fn run_dictate(
     json: bool,
     no_vad: bool,
     device: &Option<String>,
+    polish: bool,
+    polish_provider: &str,
+    polish_prompt: &str,
 ) -> Result<(), String> {
     let service = load_service(model)?;
 
@@ -242,20 +276,26 @@ fn run_dictate(
         service.transcribe_with_vad(&buffer, &mut vad)?
     };
 
+    let final_text = if polish {
+        maybe_polish(&result.text, polish_provider, polish_prompt)
+    } else {
+        result.text.clone()
+    };
+
     if json {
         let output = serde_json::json!({
-            "text": result.text,
+            "text": final_text,
             "segments": result.segments,
             "language": result.language,
             "duration_ms": result.duration_ms,
         });
         println!("{}", serde_json::to_string_pretty(&output).unwrap());
     } else {
-        println!("{}", result.text);
+        println!("{}", final_text);
     }
 
     if copy {
-        copy_to_clipboard(&result.text)?;
+        copy_to_clipboard(&final_text)?;
         eprintln!("Copied to clipboard.");
     }
 
@@ -269,6 +309,9 @@ fn run_listen(
     no_vad: bool,
     device: &Option<String>,
     silence_timeout: f32,
+    polish: bool,
+    polish_provider: &str,
+    polish_prompt: &str,
 ) -> Result<(), String> {
     let service = load_service(model)?;
 
@@ -354,24 +397,47 @@ fn run_listen(
             continue;
         }
 
+        let final_text = if polish {
+            maybe_polish(&result.text, polish_provider, polish_prompt)
+        } else {
+            result.text.clone()
+        };
+
         if json {
             let output = serde_json::json!({
-                "text": result.text,
+                "text": final_text,
                 "segments": result.segments,
                 "language": result.language,
                 "duration_ms": result.duration_ms,
             });
             println!("{}", serde_json::to_string(&output).unwrap());
         } else {
-            println!("{}", result.text);
+            println!("{}", final_text);
         }
 
         if copy {
-            let _ = copy_to_clipboard(&result.text);
+            let _ = copy_to_clipboard(&final_text);
         }
     }
 
     Ok(())
+}
+
+fn maybe_polish(text: &str, provider: &str, prompt: &str) -> String {
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Polish error: failed to create runtime: {e}");
+            return text.to_string();
+        }
+    };
+    match rt.block_on(ai::polish_text(provider, text, prompt)) {
+        Ok(polished) => polished,
+        Err(e) => {
+            eprintln!("Polish error: {e}");
+            text.to_string()
+        }
+    }
 }
 
 fn run_config(action: ConfigAction) -> Result<(), String> {
