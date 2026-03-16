@@ -43,7 +43,7 @@ use transcription::{SupportedLanguage, TranscriptionConfig, TranscriptionResult,
 use tray::{TrayRecordingState, TrayState};
 
 #[cfg(feature = "desktop")]
-type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingHandle>>>;
+type AudioState = Arc<std::sync::Mutex<Option<audio::RecordingState>>>;
 #[cfg(feature = "desktop")]
 type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
 #[cfg(feature = "desktop")]
