@@ -6,6 +6,7 @@ pub mod audio;
 mod audio_level;
 pub mod audio_preprocess;
 pub mod db;
+pub mod formatting;
 pub mod history;
 #[cfg(feature = "desktop")]
 mod hotkey;
