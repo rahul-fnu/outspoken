@@ -410,6 +410,87 @@ async fn process_anthropic(
 }
 
 // ---------------------------------------------------------------------------
+// Non-streaming polish (CLI, no Tauri/AppHandle needed)
+// ---------------------------------------------------------------------------
+
+pub async fn polish_text(provider: &str, text: &str, prompt: &str) -> Result<String, String> {
+    let api_key = get_api_key(provider)?
+        .ok_or_else(|| format!("No API key configured for {provider}"))?;
+
+    let client = Client::new();
+
+    match provider {
+        "openai" => {
+            let body = serde_json::json!({
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": text}
+                ]
+            });
+            let resp = client
+                .post("https://api.openai.com/v1/chat/completions")
+                .header("Authorization", format!("Bearer {api_key}"))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Network error: {e}"))?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                let err_text = resp.text().await.unwrap_or_default();
+                return Err(format!("OpenAI API error ({status}): {err_text}"));
+            }
+
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("JSON parse error: {e}"))?;
+            json["choices"][0]["message"]["content"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "No content in OpenAI response".to_string())
+        }
+        "anthropic" => {
+            let body = serde_json::json!({
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 4096,
+                "system": prompt,
+                "messages": [
+                    {"role": "user", "content": text}
+                ]
+            });
+            let resp = client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Network error: {e}"))?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                let err_text = resp.text().await.unwrap_or_default();
+                return Err(format!("Anthropic API error ({status}): {err_text}"));
+            }
+
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("JSON parse error: {e}"))?;
+            json["content"][0]["text"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "No content in Anthropic response".to_string())
+        }
+        _ => Err(format!("Unknown provider: {provider}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Prompt management
 // ---------------------------------------------------------------------------
 
