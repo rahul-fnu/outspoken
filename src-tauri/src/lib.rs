@@ -14,7 +14,6 @@ pub mod models;
 pub mod settings;
 #[cfg(feature = "desktop")]
 mod text_insert;
-pub mod formatting;
 pub mod text_processing;
 pub mod transcription;
 #[cfg(feature = "desktop")]
@@ -592,20 +591,32 @@ fn delete_custom_prompt(id: i64) -> Result<(), String> {
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn get_format_profile(bundle_id_or_name: String) -> formatting::FormatProfile {
-    formatting::get_profile_for_app(&bundle_id_or_name)
+fn enable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .enable()
+        .map_err(|e| format!("Failed to enable autostart: {e}"))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn list_format_profiles() -> Vec<formatting::FormatProfile> {
-    formatting::list_profiles()
+fn disable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .disable()
+        .map_err(|e| format!("Failed to disable autostart: {e}"))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn set_app_profile(app_identifier: String, profile_name: String) -> Result<(), String> {
-    formatting::set_app_profile(&app_identifier, &profile_name)
+fn is_autostart_enabled(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Failed to check autostart status: {e}"))
 }
 
 #[cfg(feature = "desktop")]
@@ -629,6 +640,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(progress_map)
         .manage(cancellation_map)
         .manage(audio_state)
@@ -689,9 +701,9 @@ pub fn run() {
             list_ai_prompts,
             save_custom_prompt,
             delete_custom_prompt,
-            get_format_profile,
-            list_format_profiles,
-            set_app_profile,
+            enable_autostart,
+            disable_autostart,
+            is_autostart_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
