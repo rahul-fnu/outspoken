@@ -463,10 +463,11 @@ fn list_dictionary() -> Result<Vec<text_processing::DictionaryEntry>, String> {
 #[tauri::command]
 fn process_transcription_text(
     text: String,
+    strip_corrections: bool,
     strip_fillers: bool,
 ) -> Result<String, String> {
     let entries = text_processing::list_entries()?;
-    Ok(text_processing::process_text(&text, strip_fillers, &entries))
+    Ok(text_processing::process_text(&text, strip_corrections, strip_fillers, &entries))
 }
 
 #[cfg(feature = "desktop")]
