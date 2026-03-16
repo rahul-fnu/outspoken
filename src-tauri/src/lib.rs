@@ -6,6 +6,7 @@ pub mod audio;
 mod audio_level;
 pub mod audio_preprocess;
 pub mod db;
+pub mod formatting;
 pub mod history;
 #[cfg(feature = "desktop")]
 mod hotkey;
@@ -131,7 +132,7 @@ fn select_audio_device(
 ) -> Result<(), String> {
     let mut dev = selected_device
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
     *dev = device_name;
     Ok(())
 }
@@ -146,7 +147,7 @@ fn start_recording(
 ) -> Result<(), String> {
     let mut state = audio_state
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
 
     if state.is_some() {
         return Err("Already recording".into());
@@ -154,12 +155,12 @@ fn start_recording(
 
     let device_name = selected_device
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?
+        .map_err(|_| "Internal error — please report this bug".to_string())?
         .clone();
 
     let config = silence_config
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?
+        .map_err(|_| "Internal error — please report this bug".to_string())?
         .clone();
 
     // Create level monitor and wrap in a callback for the audio stream.
@@ -184,7 +185,7 @@ fn stop_recording(
 ) -> Result<Vec<f32>, String> {
     let mut state = audio_state
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
 
     let recording = state.take().ok_or("Not currently recording")?;
 
@@ -197,7 +198,7 @@ fn stop_recording(
     let buffer = recording
         .buffer
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?
+        .map_err(|_| "Internal error — please report this bug".to_string())?
         .clone();
 
     Ok(buffer)
@@ -212,7 +213,7 @@ fn set_silence_config(
 ) -> Result<(), String> {
     let mut config = silence_config
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
     config.threshold_db = threshold_db;
     config.duration_secs = duration_secs;
     Ok(())
@@ -246,7 +247,7 @@ async fn load_transcription_model(
 
     let mut state = service_state
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
     *state = Some(svc);
     Ok(())
 }
@@ -266,7 +267,7 @@ async fn transcribe_recording(
     let service = {
         let state = service_state
             .lock()
-            .map_err(|e| format!("Lock error: {e}"))?;
+            .map_err(|_| "Internal error — please report this bug".to_string())?;
         state
             .as_ref()
             .ok_or("No transcription model loaded. Call load_transcription_model first.")?
@@ -317,19 +318,19 @@ fn snapshot_for_streaming(
     service_arc: TranscriptionServiceState,
 ) -> Result<(Vec<f32>, TranscriptionService), String> {
     let audio_data = {
-        let state = audio_arc.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let state = audio_arc.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
         match state.as_ref() {
             Some(recording) => recording
                 .buffer
                 .lock()
-                .map_err(|e| format!("Lock error: {e}"))?
+                .map_err(|_| "Internal error — please report this bug".to_string())?
                 .clone(),
             None => return Err("Not currently recording".into()),
         }
     };
 
     let service = {
-        let state = service_arc.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let state = service_arc.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
         state
             .as_ref()
             .ok_or("No transcription model loaded.")?
@@ -373,7 +374,7 @@ fn get_hotkey(
 ) -> Result<String, String> {
     let config = hotkey_config
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
     Ok(config.shortcut.clone())
 }
 
@@ -390,7 +391,7 @@ fn set_hotkey(
     // If registration succeeded, update the stored config
     let mut config = hotkey_config
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
     config.shortcut = shortcut;
     Ok(())
 }
@@ -410,7 +411,7 @@ fn get_settings(
 ) -> Result<AppSettings, String> {
     let settings = settings_state
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
     Ok(settings.clone())
 }
 
@@ -423,7 +424,7 @@ fn update_settings(
     settings::save_settings(&new_settings)?;
     let mut settings = settings_state
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?;
+        .map_err(|_| "Internal error — please report this bug".to_string())?;
     *settings = new_settings;
     Ok(())
 }
@@ -535,7 +536,12 @@ async fn save_api_key(provider: String, key: String) -> Result<(), String> {
     // Validate key before saving
     let valid = ai::validate_api_key(&provider, &key).await?;
     if !valid {
-        return Err(format!("Invalid API key for {provider}"));
+        let url = match provider.as_str() {
+            "openai" => "https://platform.openai.com/api-keys",
+            "anthropic" => "https://console.anthropic.com/settings/keys",
+            _ => "",
+        };
+        return Err(format!("API key for {provider} is invalid. Get a key at {url} and run `outspoken config set-key {provider}`"));
     }
     ai::save_api_key(&provider, &key)
 }
@@ -590,6 +596,36 @@ fn delete_custom_prompt(id: i64) -> Result<(), String> {
 }
 
 #[cfg(feature = "desktop")]
+#[tauri::command]
+fn enable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .enable()
+        .map_err(|e| format!("Failed to enable autostart: {e}"))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn disable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .disable()
+        .map_err(|e| format!("Failed to disable autostart: {e}"))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn is_autostart_enabled(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Failed to check autostart status: {e}"))
+}
+
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -610,6 +646,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(progress_map)
         .manage(cancellation_map)
         .manage(audio_state)
@@ -670,6 +707,9 @@ pub fn run() {
             list_ai_prompts,
             save_custom_prompt,
             delete_custom_prompt,
+            enable_autostart,
+            disable_autostart,
+            is_autostart_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

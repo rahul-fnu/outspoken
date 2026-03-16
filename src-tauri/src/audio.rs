@@ -56,7 +56,7 @@ fn find_device(device_name: &Option<String>) -> Result<Device, String> {
         }
         None => host
             .default_input_device()
-            .ok_or_else(|| "No default input device available".to_string()),
+            .ok_or_else(|| "No microphone found. Connect a microphone and try again. On Linux, ensure PulseAudio/PipeWire is running.".to_string()),
     }
 }
 
@@ -187,7 +187,7 @@ pub fn start_capture(
     let stream = match sample_format {
         SampleFormat::F32 => device
             .build_input_stream(&config, data_callback, err_callback, None)
-            .map_err(|e| format!("Failed to build input stream: {e}"))?,
+            .map_err(|e| format!("Microphone access failed: {e}. On macOS, check System Settings → Privacy → Microphone. On Linux, check `arecord -l`."))?,
         SampleFormat::I16 => {
             let buf_clone = Arc::clone(&buffer);
             let recording_flag = Arc::clone(&is_recording);
@@ -273,7 +273,7 @@ pub fn start_capture(
                     err_callback,
                     None,
                 )
-                .map_err(|e| format!("Failed to build input stream: {e}"))?
+                .map_err(|e| format!("Microphone access failed: {e}. On macOS, check System Settings → Privacy → Microphone. On Linux, check `arecord -l`."))?
         }
         format => return Err(format!("Unsupported sample format: {format:?}")),
     };
