@@ -281,15 +281,15 @@ fn run_listen(
 
     eprintln!("Listening... press Ctrl+C to stop.");
 
-    let silence_samples = (silence_timeout * 16_000.0) as usize;
-    let silence_threshold: f32 = 0.01;
+    let max_wait = std::time::Duration::from_secs_f32(silence_timeout);
 
     while running.load(Ordering::SeqCst) {
         let recording = audio::start_capture(device, None)?;
-
-        // Wait for speech then silence, or Ctrl+C
+        let mut vad = VadSegmenter::new()?;
         let mut had_speech = false;
-        let mut silent_count: usize = 0;
+        let mut speech_ended = false;
+        let mut last_speech_time = std::time::Instant::now();
+        let start_time = std::time::Instant::now();
 
         loop {
             if !running.load(Ordering::SeqCst) {
@@ -299,35 +299,51 @@ fn run_listen(
                 return Ok(());
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(500));
 
             let buf = recording
                 .buffer
                 .lock()
                 .map_err(|e| format!("Lock error: {e}"))?;
-            let len = buf.len();
 
-            if len == 0 {
+            if buf.len() < 16000 {
                 continue;
             }
 
-            // Check the last 1600 samples (100ms at 16kHz) for energy
-            let check_len = 1600.min(len);
-            let tail = &buf[len - check_len..];
-            let rms: f32 = (tail.iter().map(|s| s * s).sum::<f32>() / check_len as f32).sqrt();
+            let snapshot = buf.clone();
+            drop(buf);
 
-            if rms > silence_threshold {
+            let segments = vad.segment(&snapshot)?;
+
+            if !segments.is_empty() {
                 had_speech = true;
-                silent_count = 0;
-            } else if had_speech {
-                // Count silent samples (approximate from buffer growth)
-                silent_count += 1600;
-                if silent_count >= silence_samples {
+                let last_seg = &segments[segments.len() - 1];
+                let speech_end_sec = last_seg.end_sample as f32 / 16000.0;
+                let buf_duration_sec = snapshot.len() as f32 / 16000.0;
+                let trailing_silence = buf_duration_sec - speech_end_sec;
+
+                if trailing_silence >= 0.3 {
+                    speech_ended = true;
                     break;
                 }
+                last_speech_time = std::time::Instant::now();
             }
 
-            drop(buf);
+            if had_speech && last_speech_time.elapsed() >= max_wait {
+                speech_ended = true;
+                break;
+            }
+
+            if !had_speech && start_time.elapsed() >= max_wait {
+                break;
+            }
+        }
+
+        if !speech_ended {
+            recording
+                .is_recording
+                .store(false, Ordering::Relaxed);
+            continue;
         }
 
         // Stop recording and transcribe
