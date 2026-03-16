@@ -160,7 +160,7 @@ pub fn remove_self_corrections(text: &str) -> String {
         // e.g. "I actually like this" should remain unchanged.
         if lower[trigger_pos..trigger_end] == *"actually" {
             let preceding = before_trimmed.to_lowercase();
-            let last_word = preceding.rsplit_whitespace().next().unwrap_or("");
+            let last_word = preceding.split_whitespace().last().unwrap_or("");
             if matches!(last_word, "i" | "we" | "they" | "you" | "he" | "she" | "it") {
                 search_from = trigger_end;
                 continue;
