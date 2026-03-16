@@ -35,6 +35,7 @@ function App() {
   const [streamingText, setStreamingText] = useState<string>("");
   const [isStreaming, setIsStreaming] = useState(false);
   const streamingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isPolishing, setIsPolishing] = useState(false);
 
   // Model & language state (shared with settings)
   const [activeModel, setActiveModel] = useState<string | null>(null);
@@ -126,13 +127,38 @@ function App() {
         const result = await invoke<TranscriptionResult>("transcribe_recording", { audioData });
         // Apply text post-processing (filler removal + dictionary corrections)
         try {
-          const settings = await invoke<{ strip_filler_words: boolean }>("get_settings");
+          const settings = await invoke<{ strip_filler_words: boolean; auto_polish_enabled: boolean; openai_api_key?: string; anthropic_api_key?: string }>("get_settings");
           const processed = await invoke<string>("process_transcription_text", {
             text: result.text,
             stripCorrections: true,
             stripFillers: settings.strip_filler_words,
           });
           result.text = processed;
+
+          // Auto-polish with AI if enabled and an API key is configured
+          if (settings.auto_polish_enabled && result.text) {
+            const provider = settings.openai_api_key ? "openai" : settings.anthropic_api_key ? "anthropic" : null;
+            if (provider) {
+              setIsPolishing(true);
+              try {
+                const aiResult = await invoke<{ text: string }>("process_ai_text", {
+                  request: {
+                    text: result.text,
+                    prompt: "Polish and clean up this dictated text. Fix grammar, punctuation, and formatting while preserving the original meaning. Return only the polished text.",
+                    provider,
+                    model: null,
+                  },
+                });
+                if (aiResult.text) {
+                  result.text = aiResult.text;
+                }
+              } catch {
+                // If AI polish fails, fall back to raw transcription
+              } finally {
+                setIsPolishing(false);
+              }
+            }
+          }
         } catch {
           // If post-processing fails, use raw text
         }
@@ -313,7 +339,7 @@ function App() {
         {isProcessing && (
           <div style={styles.processingIndicator}>
             <div style={styles.spinner} />
-            <span style={{ marginLeft: 8 }}>Transcribing audio...</span>
+            <span style={{ marginLeft: 8 }}>{isPolishing ? "Polishing..." : "Transcribing audio..."}</span>
           </div>
         )}
 
