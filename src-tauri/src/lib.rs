@@ -14,6 +14,7 @@ pub mod models;
 pub mod settings;
 #[cfg(feature = "desktop")]
 mod text_insert;
+pub mod formatting;
 pub mod text_processing;
 pub mod transcription;
 #[cfg(feature = "desktop")]
@@ -531,6 +532,24 @@ fn delete_custom_prompt(id: i64) -> Result<(), String> {
 }
 
 #[cfg(feature = "desktop")]
+#[tauri::command]
+fn get_format_profile(bundle_id_or_name: String) -> formatting::FormatProfile {
+    formatting::get_profile_for_app(&bundle_id_or_name)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn list_format_profiles() -> Vec<formatting::FormatProfile> {
+    formatting::list_profiles()
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn set_app_profile(app_identifier: String, profile_name: String) -> Result<(), String> {
+    formatting::set_app_profile(&app_identifier, &profile_name)
+}
+
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -610,6 +629,9 @@ pub fn run() {
             list_ai_prompts,
             save_custom_prompt,
             delete_custom_prompt,
+            get_format_profile,
+            list_format_profiles,
+            set_app_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
