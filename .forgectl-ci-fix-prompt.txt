@@ -1,8 +1,25 @@
 The CI build is failing on this branch. Here are the error logs:
 
-.github:51: Process completed with exit code 101.
-.github:95: Process completed with exit code 1.
-.github:51: Process completed with exit code 101.
+|             ^^^^^^^^^^^  ^^^^^^^^^
+
+error[E0599]: no method named `state` found for mutable reference `&mut tauri::App` in the current scope
+--> src/lib.rs:667:78
+|
+667 |             let svc_state: tauri::State<'_, TranscriptionServiceState> = app.state();
+|                                                                              ^^^^^
+|                                                                              ++++
+error[E0282]: type annotations needed
+--> src/lib.rs:686:32
+686 | ...                   if state.is_none() {
+|                          ^^^^^ cannot infer type
+For more information about an error, try `rustc --explain E0282`.
+warning: `outspoken` (lib) generated 2 warnings
+error: could not compile `outspoken` (lib) due to 2 previous errors; 2 warnings emitted
+##[error]Process completed with exit code 101.
+Post job cleanup.
+[command]/opt/homebrew/bin/git version
+git version 2.53.0
+Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/165fa0bd-6a9b-423d-9a1e-dcb4e27f364d/.gitconfig'
 
 Fix the build errors. Rules:
 - Read the failing source files before making changes
