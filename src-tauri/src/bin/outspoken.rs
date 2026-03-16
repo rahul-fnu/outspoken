@@ -5,7 +5,7 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use outspoken_lib::audio;
 use outspoken_lib::models;
-use outspoken_lib::transcription::{TranscriptionConfig, TranscriptionService};
+use outspoken_lib::transcription::{self, TranscriptionConfig, TranscriptionService};
 
 #[derive(Parser)]
 #[command(name = "outspoken", version, about = "AI-powered dictation from the terminal")]
@@ -37,6 +37,10 @@ enum Commands {
         /// Audio input device name
         #[arg(long)]
         device: Option<String>,
+
+        /// Show full whisper.cpp logging output
+        #[arg(long, short)]
+        verbose: bool,
     },
 
     /// Continuous mode - transcribe each utterance as a new line
@@ -64,6 +68,10 @@ enum Commands {
         /// Seconds of silence before finalizing utterance
         #[arg(long, default_value = "2")]
         silence_timeout: f32,
+
+        /// Show full whisper.cpp logging output
+        #[arg(long, short)]
+        verbose: bool,
     },
 
     /// Manage configuration: models, devices
@@ -101,7 +109,11 @@ fn main() {
             json,
             no_vad: _,
             device,
+            verbose,
         } => {
+            if !verbose {
+                transcription::suppress_whisper_log();
+            }
             if let Err(e) = run_dictate(&model, copy, json, &device) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
@@ -114,7 +126,11 @@ fn main() {
             no_vad: _,
             device,
             silence_timeout,
+            verbose,
         } => {
+            if !verbose {
+                transcription::suppress_whisper_log();
+            }
             if let Err(e) = run_listen(&model, copy, json, &device, silence_timeout) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);

@@ -4,6 +4,19 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+/// Suppress all whisper.cpp log output by installing a no-op log callback.
+pub fn suppress_whisper_log() {
+    unsafe extern "C" fn noop_log(
+        _level: whisper_rs::whisper_rs_sys::ggml_log_level,
+        _text: *const std::os::raw::c_char,
+        _user_data: *mut std::os::raw::c_void,
+    ) {
+    }
+    unsafe {
+        whisper_rs::whisper_rs_sys::whisper_log_set(Some(noop_log), std::ptr::null_mut());
+    }
+}
+
 use crate::audio_preprocess::normalize_gain;
 use crate::vad::VadSegmenter;
 
