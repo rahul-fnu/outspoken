@@ -13,6 +13,7 @@ interface AppSettings {
   personal_dictionary: string[];
   openai_api_key?: string;
   anthropic_api_key?: string;
+  auto_polish_enabled: boolean;
 }
 
 interface ModelInfo {
@@ -853,6 +854,21 @@ export default function Settings({
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* Auto-polish toggle */}
+            <h2 style={{ ...styles.sectionTitle, marginTop: 24 }}>Auto-polish with AI</h2>
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={settings.auto_polish_enabled}
+                onChange={(e) => updateField("auto_polish_enabled", e.target.checked)}
+              />
+              <span>Automatically polish transcriptions with AI after dictation</span>
+            </label>
+            <div style={styles.hint}>
+              When enabled and an API key is configured, transcribed text will be
+              automatically sent through AI for polishing before pasting.
             </div>
 
             {/* Prompts */}

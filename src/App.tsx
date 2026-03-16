@@ -32,6 +32,10 @@ function App() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [copied, setCopied] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [streamingText, setStreamingText] = useState<string>("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const streamingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isPolishing, setIsPolishing] = useState(false);
 
   // Model & language state (shared with settings)
   const [activeModel, setActiveModel] = useState<string | null>(null);
@@ -78,6 +82,36 @@ function App() {
     };
   }, [isRecording]);
 
+  // Streaming transcription during recording
+  useEffect(() => {
+    if (isRecording) {
+      setStreamingText("");
+      setIsStreaming(false);
+      streamingIntervalRef.current = setInterval(async () => {
+        try {
+          setIsStreaming(true);
+          const result = await invoke<TranscriptionResult>("transcribe_streaming_chunk");
+          if (result.text) {
+            setStreamingText(result.text);
+          }
+        } catch {
+          // Streaming chunk failed — ignore and retry next interval
+        }
+      }, 3000);
+    } else {
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+      setIsStreaming(false);
+    }
+    return () => {
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+      }
+    };
+  }, [isRecording]);
+
   // Ref for toggleRecording so callbacks/effects can call it without stale closures
   const toggleRecordingRef = useRef<() => void>(() => {});
 
@@ -93,31 +127,42 @@ function App() {
         const result = await invoke<TranscriptionResult>("transcribe_recording", { audioData });
         // Apply text post-processing (filler removal + dictionary corrections)
         try {
-          const settings = await invoke<{ strip_filler_words: boolean }>("get_settings");
+          const settings = await invoke<{ strip_filler_words: boolean; auto_polish_enabled: boolean; openai_api_key?: string; anthropic_api_key?: string }>("get_settings");
           const processed = await invoke<string>("process_transcription_text", {
             text: result.text,
             stripCorrections: true,
             stripFillers: settings.strip_filler_words,
           });
           result.text = processed;
+
+          // Auto-polish with AI if enabled and an API key is configured
+          if (settings.auto_polish_enabled && result.text) {
+            const provider = settings.openai_api_key ? "openai" : settings.anthropic_api_key ? "anthropic" : null;
+            if (provider) {
+              setIsPolishing(true);
+              try {
+                const aiResult = await invoke<{ text: string }>("process_ai_text", {
+                  request: {
+                    text: result.text,
+                    prompt: "Polish and clean up this dictated text. Fix grammar, punctuation, and formatting while preserving the original meaning. Return only the polished text.",
+                    provider,
+                    model: null,
+                  },
+                });
+                if (aiResult.text) {
+                  result.text = aiResult.text;
+                }
+              } catch {
+                // If AI polish fails, fall back to raw transcription
+              } finally {
+                setIsPolishing(false);
+              }
+            }
+          }
         } catch {
           // If post-processing fails, use raw text
         }
-        // Detect active app and apply format profile before pasting
-        let sourceApp = "";
-        try {
-          const appInfo = await invoke<{ name: string }>("get_active_app");
-          sourceApp = appInfo.name || "";
-        } catch { /* ignore */ }
-        if (result.text && sourceApp) {
-          try {
-            const formatted = await invoke<string>("apply_format_profile", {
-              text: result.text,
-              appName: sourceApp,
-            });
-            result.text = formatted;
-          } catch { /* ignore formatting errors, use unformatted text */ }
-        }
+        setStreamingText("");
         setTranscription(result);
         // Paste text into the previously active app
         if (result.text) {
@@ -125,6 +170,11 @@ function App() {
         }
         // Auto-save to history
         if (result.text) {
+          let sourceApp = "";
+          try {
+            const appInfo = await invoke<{ name: string }>("get_active_app");
+            sourceApp = appInfo.name || "";
+          } catch { /* ignore */ }
           await invoke("save_transcription", {
             result: {
               text: result.text,
@@ -289,7 +339,7 @@ function App() {
         {isProcessing && (
           <div style={styles.processingIndicator}>
             <div style={styles.spinner} />
-            <span style={{ marginLeft: 8 }}>Transcribing audio...</span>
+            <span style={{ marginLeft: 8 }}>{isPolishing ? "Polishing..." : "Transcribing audio..."}</span>
           </div>
         )}
 
@@ -306,6 +356,13 @@ function App() {
           <div style={styles.transcriptionBox}>
             {transcription?.text ? (
               <p style={styles.transcriptionText}>{transcription.text}</p>
+            ) : isRecording && streamingText ? (
+              <div>
+                <p style={styles.transcriptionText}>{streamingText}</p>
+                {isStreaming && (
+                  <span style={styles.streamingIndicator}>Streaming...</span>
+                )}
+              </div>
             ) : (
               <p style={styles.transcriptionPlaceholder}>
                 {isRecording
@@ -516,6 +573,13 @@ const styles: Record<string, React.CSSProperties> = {
   transcriptionPlaceholder: {
     margin: 0,
     color: "#aaa",
+    fontStyle: "italic",
+  },
+  streamingIndicator: {
+    display: "inline-block",
+    fontSize: "0.75rem",
+    color: "#1976d2",
+    marginTop: 8,
     fontStyle: "italic",
   },
   transcriptionMeta: {

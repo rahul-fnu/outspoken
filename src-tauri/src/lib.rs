@@ -282,6 +282,65 @@ async fn transcribe_recording(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+async fn transcribe_streaming_chunk(
+    audio_state: tauri::State<'_, AudioState>,
+    service_state: tauri::State<'_, TranscriptionServiceState>,
+) -> Result<TranscriptionResult, String> {
+    // Extract everything we need synchronously before any await points.
+    // This avoids lifetime/Send issues with MutexGuard holding non-Send types.
+    let audio_arc = audio_state.inner().clone();
+    let service_arc = service_state.inner().clone();
+
+    let (audio_data, service) = snapshot_for_streaming(audio_arc, service_arc)?;
+
+    if audio_data.is_empty() {
+        return Ok(TranscriptionResult {
+            text: String::new(),
+            segments: Vec::new(),
+            language: String::new(),
+            duration_ms: 0,
+        });
+    }
+
+    let result = tokio::task::spawn_blocking(move || service.transcribe(&audio_data))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))??;
+
+    Ok(result)
+}
+
+/// Synchronous helper to snapshot audio buffer and clone transcription service.
+/// Kept separate so no MutexGuard lives across async boundaries.
+#[cfg(feature = "desktop")]
+fn snapshot_for_streaming(
+    audio_arc: AudioState,
+    service_arc: TranscriptionServiceState,
+) -> Result<(Vec<f32>, TranscriptionService), String> {
+    let audio_data = {
+        let state = audio_arc.lock().map_err(|e| format!("Lock error: {e}"))?;
+        match state.as_ref() {
+            Some(recording) => recording
+                .buffer
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?
+                .clone(),
+            None => return Err("Not currently recording".into()),
+        }
+    };
+
+    let service = {
+        let state = service_arc.lock().map_err(|e| format!("Lock error: {e}"))?;
+        state
+            .as_ref()
+            .ok_or("No transcription model loaded.")?
+            .clone()
+    };
+
+    Ok((audio_data, service))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn set_tray_state(
     app_handle: tauri::AppHandle,
     state: String,
@@ -531,155 +590,33 @@ fn delete_custom_prompt(id: i64) -> Result<(), String> {
 }
 
 #[cfg(feature = "desktop")]
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FormatProfileMapping {
-    pub app_pattern: String,
-    pub profile: String,
-}
-
-#[cfg(feature = "desktop")]
-fn default_format_profiles() -> Vec<FormatProfileMapping> {
-    vec![
-        FormatProfileMapping { app_pattern: "Slack".into(), profile: "casual".into() },
-        FormatProfileMapping { app_pattern: "Discord".into(), profile: "casual".into() },
-        FormatProfileMapping { app_pattern: "Messages".into(), profile: "casual".into() },
-        FormatProfileMapping { app_pattern: "Mail".into(), profile: "professional".into() },
-        FormatProfileMapping { app_pattern: "Outlook".into(), profile: "professional".into() },
-        FormatProfileMapping { app_pattern: "Gmail".into(), profile: "professional".into() },
-        FormatProfileMapping { app_pattern: "Notes".into(), profile: "default".into() },
-        FormatProfileMapping { app_pattern: "TextEdit".into(), profile: "default".into() },
-    ]
-}
-
-#[cfg(feature = "desktop")]
-fn get_format_profile_for_app(app_name: &str) -> String {
-    let app_lower = app_name.to_lowercase();
-    // Check DB overrides first
-    if let Ok(conn) = db::open_db() {
-        let mut stmt = conn
-            .prepare("SELECT profile FROM format_profile_overrides WHERE LOWER(app_pattern) = ?1")
-            .ok();
-        if let Some(ref mut s) = stmt {
-            if let Ok(profile) = s.query_row(rusqlite::params![&app_lower], |row| row.get::<_, String>(0)) {
-                return profile;
-            }
-        }
-    }
-    // Fall back to built-in defaults
-    for mapping in default_format_profiles() {
-        if app_lower.contains(&mapping.app_pattern.to_lowercase()) {
-            return mapping.profile;
-        }
-    }
-    "default".to_string()
-}
-
-#[cfg(feature = "desktop")]
-fn apply_format(text: &str, profile: &str) -> String {
-    match profile {
-        "casual" => {
-            let mut result = text.to_string();
-            // Lowercase the first character
-            if let Some(first) = result.chars().next() {
-                if first.is_uppercase() {
-                    let lower: String = first.to_lowercase().collect();
-                    result = format!("{}{}", lower, &result[first.len_utf8()..]);
-                }
-            }
-            // Remove trailing period (keep ! and ?)
-            if result.ends_with('.') {
-                result.pop();
-            }
-            result
-        }
-        "professional" => {
-            let mut result = text.to_string();
-            // Ensure first character is capitalized
-            if let Some(first) = result.chars().next() {
-                if first.is_lowercase() {
-                    let upper: String = first.to_uppercase().collect();
-                    result = format!("{}{}", upper, &result[first.len_utf8()..]);
-                }
-            }
-            // Ensure ends with period if no sentence-ending punctuation
-            let trimmed = result.trim_end();
-            if !trimmed.is_empty()
-                && !trimmed.ends_with('.')
-                && !trimmed.ends_with('!')
-                && !trimmed.ends_with('?')
-            {
-                result = format!("{}.", trimmed);
-            }
-            result
-        }
-        _ => text.to_string(),
-    }
+#[tauri::command]
+fn enable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .enable()
+        .map_err(|e| format!("Failed to enable autostart: {e}"))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn apply_format_profile(text: String, app_name: String) -> String {
-    let profile = get_format_profile_for_app(&app_name);
-    apply_format(&text, &profile)
+fn disable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .disable()
+        .map_err(|e| format!("Failed to disable autostart: {e}"))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn get_format_profile(app_name: String) -> String {
-    get_format_profile_for_app(&app_name)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-fn list_format_profiles() -> Vec<FormatProfileMapping> {
-    let mut profiles = default_format_profiles();
-    // Apply overrides from DB
-    if let Ok(conn) = db::open_db() {
-        let mut stmt = conn
-            .prepare("SELECT app_pattern, profile FROM format_profile_overrides ORDER BY app_pattern")
-            .ok();
-        if let Some(ref mut s) = stmt {
-            if let Ok(rows) = s.query_map([], |row| {
-                Ok(FormatProfileMapping {
-                    app_pattern: row.get(0)?,
-                    profile: row.get(1)?,
-                })
-            }) {
-                for row in rows.flatten() {
-                    if let Some(existing) = profiles.iter_mut().find(|p| p.app_pattern.to_lowercase() == row.app_pattern.to_lowercase()) {
-                        existing.profile = row.profile;
-                    } else {
-                        profiles.push(row);
-                    }
-                }
-            }
-        }
-    }
-    profiles
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-fn set_format_profile_override(app_pattern: String, profile: String) -> Result<(), String> {
-    let conn = db::open_db()?;
-    conn.execute(
-        "INSERT OR REPLACE INTO format_profile_overrides (app_pattern, profile) VALUES (?1, ?2)",
-        rusqlite::params![app_pattern.to_lowercase(), profile],
-    )
-    .map_err(|e| format!("Failed to save format profile override: {e}"))?;
-    Ok(())
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-fn remove_format_profile_override(app_pattern: String) -> Result<(), String> {
-    let conn = db::open_db()?;
-    conn.execute(
-        "DELETE FROM format_profile_overrides WHERE app_pattern = ?1",
-        rusqlite::params![app_pattern.to_lowercase()],
-    )
-    .map_err(|e| format!("Failed to remove format profile override: {e}"))?;
-    Ok(())
+fn is_autostart_enabled(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Failed to check autostart status: {e}"))
 }
 
 #[cfg(feature = "desktop")]
@@ -703,6 +640,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(progress_map)
         .manage(cancellation_map)
         .manage(audio_state)
@@ -735,6 +673,7 @@ pub fn run() {
             set_silence_config,
             load_transcription_model,
             transcribe_recording,
+            transcribe_streaming_chunk,
             list_supported_languages,
             set_tray_state,
             insert_text,
@@ -762,11 +701,9 @@ pub fn run() {
             list_ai_prompts,
             save_custom_prompt,
             delete_custom_prompt,
-            apply_format_profile,
-            get_format_profile,
-            list_format_profiles,
-            set_format_profile_override,
-            remove_format_profile_override,
+            enable_autostart,
+            disable_autostart,
+            is_autostart_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
