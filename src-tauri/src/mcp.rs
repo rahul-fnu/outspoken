@@ -287,20 +287,25 @@ impl McpServer {
         }
 
         match method {
-            "initialize" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {}
-                    },
-                    "serverInfo": {
-                        "name": "outspoken",
-                        "version": "0.1.0"
-                    }
+            "initialize" => {
+                if let Err(e) = self.ensure_model_loaded() {
+                    eprintln!("Model preload during initialize failed: {e}");
                 }
-            }),
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "outspoken",
+                            "version": "0.1.0"
+                        }
+                    }
+                })
+            },
             "tools/list" => json!({
                 "jsonrpc": "2.0",
                 "id": id,

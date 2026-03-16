@@ -656,6 +656,36 @@ pub fn run() {
             if let Err(e) = hotkey::register_hotkey(app.handle(), "Ctrl+Shift+Space") {
                 eprintln!("Failed to register default hotkey: {e}");
             }
+
+            // Pre-load whisper model in background thread to avoid cold-start delay
+            let svc_state: tauri::State<'_, TranscriptionServiceState> = app.state();
+            let svc_arc = svc_state.inner().clone();
+            std::thread::spawn(move || {
+                let downloaded = match models::list_downloaded_models() {
+                    Ok(d) => d,
+                    Err(_) => return,
+                };
+                let model = match downloaded.first() {
+                    Some(m) => m,
+                    None => return,
+                };
+                let model_path = PathBuf::from(&model.path);
+                if !model_path.exists() {
+                    return;
+                }
+                let cfg = TranscriptionConfig::default();
+                match TranscriptionService::new(&model_path, cfg) {
+                    Ok(service) => {
+                        if let Ok(mut state) = svc_arc.lock() {
+                            if state.is_none() {
+                                *state = Some(service);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("Background model preload failed: {e}"),
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
