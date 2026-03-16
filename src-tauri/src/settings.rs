@@ -18,6 +18,8 @@ pub struct AppSettings {
     pub openai_api_key: String,
     #[serde(default)]
     pub anthropic_api_key: String,
+    #[serde(default)]
+    pub auto_polish_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -34,6 +36,7 @@ impl Default for AppSettings {
             personal_dictionary: Vec::new(),
             openai_api_key: String::new(),
             anthropic_api_key: String::new(),
+            auto_polish_enabled: false,
         }
     }
 }
@@ -110,6 +113,9 @@ pub fn load_settings() -> AppSettings {
             .unwrap_or_default(),
         openai_api_key: get_setting(&conn, "openai_api_key").unwrap_or_default(),
         anthropic_api_key: get_setting(&conn, "anthropic_api_key").unwrap_or_default(),
+        auto_polish_enabled: get_setting(&conn, "auto_polish_enabled")
+            .map(|v| v == "true")
+            .unwrap_or(false),
     }
 }
 
@@ -136,5 +142,6 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     set_setting(&conn, "personal_dictionary", &dict_json)?;
     set_setting(&conn, "openai_api_key", &settings.openai_api_key)?;
     set_setting(&conn, "anthropic_api_key", &settings.anthropic_api_key)?;
+    set_setting(&conn, "auto_polish_enabled", &settings.auto_polish_enabled.to_string())?;
     Ok(())
 }
