@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use crate::audio;
 use crate::models;
 use crate::transcription::{TranscriptionConfig, TranscriptionService};
+use crate::vad::VadSegmenter;
 
 #[derive(Debug, Clone, PartialEq)]
 enum McpState {
@@ -50,15 +51,38 @@ impl McpServer {
         }
         drop(svc);
 
+        let default_model = "large-v3-turbo-q5_0";
         let downloaded = models::list_downloaded_models()?;
-        let model = downloaded
-            .first()
-            .ok_or_else(|| "No whisper models downloaded. Use the Outspoken app to download a model first.".to_string())?;
 
-        let model_path = PathBuf::from(&model.path);
-        if !model_path.exists() {
-            return Err(format!("Model file not found: {}", model.path));
-        }
+        let model_path = if let Some(m) = downloaded.first() {
+            let path = PathBuf::from(&m.path);
+            if path.exists() {
+                path
+            } else {
+                return Err(format!("Model file not found: {}", m.path));
+            }
+        } else {
+            eprintln!("No models found, auto-downloading '{default_model}'...");
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {e}"))?;
+            let progress_map: models::ProgressMap =
+                Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+            let cancellation_map: models::CancellationMap =
+                Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+            let model = rt.block_on(models::download_model(
+                default_model.to_string(),
+                progress_map,
+                cancellation_map,
+            ))?;
+            eprintln!("Download complete.");
+            PathBuf::from(model.path)
+        };
+
+        let model_name = model_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(default_model)
+            .to_string();
 
         let config = TranscriptionConfig::default();
         let service = TranscriptionService::new(&model_path, config)?;
@@ -66,7 +90,7 @@ impl McpServer {
         let mut svc = self.transcription_service.lock().map_err(|e| format!("Lock error: {e}"))?;
         *svc = Some(service);
         let mut name = self.loaded_model_name.lock().map_err(|e| format!("Lock error: {e}"))?;
-        *name = Some(model.name.clone());
+        *name = Some(model_name);
         Ok(())
     }
 
@@ -77,7 +101,47 @@ impl McpServer {
         }
 
         let recording = audio::start_capture(&None, None)?;
-        std::thread::sleep(std::time::Duration::from_secs_f64(timeout_secs));
+
+        let silence_threshold: f32 = 0.01;
+        let silence_timeout: f32 = 2.0;
+        let silence_samples = (silence_timeout * 16_000.0) as usize;
+        let start = Instant::now();
+        let mut had_speech = false;
+        let mut silent_count: usize = 0;
+
+        loop {
+            if start.elapsed().as_secs_f64() >= timeout_secs {
+                break;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            let buf = recording
+                .buffer
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?;
+            let len = buf.len();
+
+            if len == 0 {
+                continue;
+            }
+
+            let check_len = 1600.min(len);
+            let tail = &buf[len - check_len..];
+            let rms: f32 = (tail.iter().map(|s| s * s).sum::<f32>() / check_len as f32).sqrt();
+
+            if rms > silence_threshold {
+                had_speech = true;
+                silent_count = 0;
+            } else if had_speech {
+                silent_count += 1600;
+                if silent_count >= silence_samples {
+                    break;
+                }
+            }
+
+            drop(buf);
+        }
 
         recording.is_recording.store(false, Ordering::Relaxed);
         let buffer = recording
@@ -102,7 +166,8 @@ impl McpServer {
 
         let svc = self.transcription_service.lock().map_err(|e| format!("Lock error: {e}"))?;
         let service = svc.as_ref().ok_or("No model loaded")?;
-        let result = service.transcribe(audio_data);
+        let mut vad = VadSegmenter::new()?;
+        let result = service.transcribe_with_vad(audio_data, &mut vad);
 
         {
             let mut state = self.state.lock().map_err(|e| format!("Lock error: {e}"))?;
