@@ -254,7 +254,7 @@ async fn process_openai(
         return Err("Rate limited — please try again in a few seconds".into());
     }
     if status.as_u16() == 401 {
-        return Err("Invalid API key — please re-enter your OpenAI key".into());
+        return Err("API key for OpenAI is invalid. Get a key at https://platform.openai.com/api-keys and run `outspoken config set-key openai`".into());
     }
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
@@ -348,7 +348,7 @@ async fn process_anthropic(
         return Err("Rate limited — please try again in a few seconds".into());
     }
     if status.as_u16() == 401 {
-        return Err("Invalid API key — please re-enter your Anthropic key".into());
+        return Err("API key for Anthropic is invalid. Get a key at https://console.anthropic.com/settings/keys and run `outspoken config set-key anthropic`".into());
     }
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
