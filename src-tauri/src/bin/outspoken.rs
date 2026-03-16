@@ -34,6 +34,10 @@ enum Commands {
         #[arg(long)]
         no_vad: bool,
 
+        /// Disable self-correction detection
+        #[arg(long)]
+        no_corrections: bool,
+
         /// Audio input device name
         #[arg(long)]
         device: Option<String>,
@@ -56,6 +60,10 @@ enum Commands {
         /// Disable voice activity detection
         #[arg(long)]
         no_vad: bool,
+
+        /// Disable self-correction detection
+        #[arg(long)]
+        no_corrections: bool,
 
         /// Audio input device name
         #[arg(long)]
@@ -100,6 +108,7 @@ fn main() {
             copy,
             json,
             no_vad: _,
+            no_corrections: _,
             device,
         } => {
             if let Err(e) = run_dictate(&model, copy, json, &device) {
@@ -112,6 +121,7 @@ fn main() {
             copy,
             json,
             no_vad: _,
+            no_corrections: _,
             device,
             silence_timeout,
         } => {

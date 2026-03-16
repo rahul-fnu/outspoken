@@ -100,6 +100,105 @@ pub fn remove_filler_words(text: &str) -> String {
     cleanup_whitespace(&result)
 }
 
+/// Remove self-corrections from transcribed speech.
+/// Detects when a speaker corrects themselves mid-sentence and removes the superseded text.
+pub fn remove_self_corrections(text: &str) -> String {
+    struct Trigger {
+        phrase: &'static str,
+        strong: bool,
+    }
+
+    const TRIGGERS: &[Trigger] = &[
+        Trigger { phrase: "let me rephrase", strong: true },
+        Trigger { phrase: "scratch that", strong: true },
+        Trigger { phrase: "actually no", strong: true },
+        Trigger { phrase: "never mind", strong: true },
+        Trigger { phrase: "or rather", strong: false },
+        Trigger { phrase: "no no", strong: true },
+        Trigger { phrase: "i mean", strong: false },
+        Trigger { phrase: "actually", strong: false },
+        Trigger { phrase: "rather", strong: false },
+        Trigger { phrase: "sorry", strong: false },
+        Trigger { phrase: "wait", strong: true },
+    ];
+
+    let mut result = text.to_string();
+    let mut search_from: usize = 0;
+
+    for _ in 0..20 {
+        let lower = result.to_lowercase();
+
+        let mut best_pos: Option<usize> = None;
+        let mut best_len: usize = 0;
+        let mut best_strong = false;
+
+        for trigger in TRIGGERS {
+            if let Some(pos) = find_word_bounded_from(&lower, trigger.phrase, search_from) {
+                let dominated = match best_pos {
+                    None => false,
+                    Some(bp) => pos > bp || (pos == bp && trigger.phrase.len() <= best_len),
+                };
+                if !dominated {
+                    best_pos = Some(pos);
+                    best_len = trigger.phrase.len();
+                    best_strong = trigger.strong;
+                }
+            }
+        }
+
+        let trigger_pos = match best_pos {
+            Some(p) => p,
+            None => break,
+        };
+
+        let trigger_end = trigger_pos + best_len;
+        let before = &result[..trigger_pos];
+        let before_trimmed = before.trim_end();
+
+        if before_trimmed.is_empty() {
+            if best_strong {
+                let after = result[trigger_end..].trim_start().to_string();
+                result = after;
+                search_from = 0;
+            } else {
+                search_from = trigger_end;
+            }
+            continue;
+        }
+
+        let after = result[trigger_end..].trim_start().to_string();
+
+        if after.is_empty() {
+            let ss = sentence_start_before(&result, trigger_pos);
+            result = result[..ss].trim_end().to_string();
+            search_from = 0;
+            continue;
+        }
+
+        if best_strong {
+            let ss = sentence_start_before(&result, trigger_pos);
+            let kept = &result[..ss];
+            result = format!("{}{}", kept, after);
+        } else {
+            let first_word = after.split_whitespace().next().unwrap_or("");
+            let first_word_lower = first_word.to_lowercase();
+            let before_lower = before_trimmed.to_lowercase();
+
+            if let Some(match_pos) = find_last_word_bounded(&before_lower, &first_word_lower) {
+                result = format!("{}{}", &result[..match_pos], after);
+            } else {
+                let last_space = before_trimmed.rfind(' ').map(|p| p + 1).unwrap_or(0);
+                result = format!("{}{}", &result[..last_space], after);
+            }
+        }
+
+        search_from = 0;
+    }
+
+    let result = result.trim().to_string();
+    capitalize_first(&result)
+}
+
 /// Apply personal dictionary replacements to text.
 pub fn apply_dictionary(text: &str, entries: &[DictionaryEntry]) -> String {
     let mut result = text.to_string();
@@ -116,10 +215,14 @@ pub fn apply_dictionary(text: &str, entries: &[DictionaryEntry]) -> String {
 /// Full post-processing pipeline.
 pub fn process_text(
     text: &str,
+    strip_corrections: bool,
     strip_fillers: bool,
     dictionary_entries: &[DictionaryEntry],
 ) -> String {
     let mut result = text.to_string();
+    if strip_corrections {
+        result = remove_self_corrections(&result);
+    }
     if strip_fillers {
         result = remove_filler_words(&result);
     }
@@ -133,6 +236,63 @@ pub fn process_text(
 
 fn is_word_boundary(c: char) -> bool {
     !c.is_alphanumeric() && c != '\''
+}
+
+fn find_word_bounded_from(text: &str, phrase: &str, from: usize) -> Option<usize> {
+    let phrase_len = phrase.len();
+    let text_bytes = text.as_bytes();
+    let mut i = from;
+    while i + phrase_len <= text.len() {
+        if &text[i..i + phrase_len] == phrase {
+            let before_ok = i == 0 || is_word_boundary(text[..i].chars().last().unwrap());
+            let after_ok =
+                i + phrase_len == text.len() || is_word_boundary(text_bytes[i + phrase_len] as char);
+            if before_ok && after_ok {
+                return Some(i);
+            }
+        }
+        i += text[i..].chars().next().unwrap().len_utf8();
+    }
+    None
+}
+
+fn find_last_word_bounded(text: &str, word: &str) -> Option<usize> {
+    let word_len = word.len();
+    let text_bytes = text.as_bytes();
+    let mut last: Option<usize> = None;
+    let mut i = 0;
+    while i + word_len <= text.len() {
+        if &text[i..i + word_len] == word {
+            let before_ok = i == 0 || is_word_boundary(text[..i].chars().last().unwrap());
+            let after_ok =
+                i + word_len == text.len() || is_word_boundary(text_bytes[i + word_len] as char);
+            if before_ok && after_ok {
+                last = Some(i);
+            }
+        }
+        i += text[i..].chars().next().unwrap().len_utf8();
+    }
+    last
+}
+
+fn sentence_start_before(text: &str, pos: usize) -> usize {
+    let before = &text[..pos];
+    for (i, c) in before.char_indices().rev() {
+        if c == '.' || c == '!' || c == '?' {
+            let next = i + c.len_utf8();
+            let rest = &before[next..];
+            return next + rest.len() - rest.trim_start().len();
+        }
+    }
+    0
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
 }
 
 fn remove_phrase_case_insensitive(text: &str, phrase: &str) -> String {
@@ -365,7 +525,58 @@ mod tests {
             case_sensitive: false,
         }];
         let input = "Um so I got an eye phone";
-        let output = process_text(input, true, &entries);
+        let output = process_text(input, false, true, &entries);
         assert_eq!(output, "so I got an iPhone");
+    }
+
+    #[test]
+    fn test_self_correction_actually_no() {
+        let result = remove_self_corrections(
+            "I want to build a new app actually no I need Claude to give me ideas",
+        );
+        assert_eq!(result, "I need Claude to give me ideas");
+    }
+
+    #[test]
+    fn test_self_correction_i_mean() {
+        let result = remove_self_corrections("Go to the store I mean the office");
+        assert_eq!(result, "Go to the office");
+    }
+
+    #[test]
+    fn test_self_correction_wait_scratch_that() {
+        let result =
+            remove_self_corrections("Let's use Python wait scratch that let's use Rust");
+        assert_eq!(result, "Let's use Rust");
+    }
+
+    #[test]
+    fn test_self_correction_no_no() {
+        let result = remove_self_corrections("Send it to John no no send it to Sarah");
+        assert_eq!(result, "Send it to Sarah");
+    }
+
+    #[test]
+    fn test_self_correction_actually() {
+        let result = remove_self_corrections("The meeting is at 3 actually 4 pm");
+        assert_eq!(result, "The meeting is at 4 pm");
+    }
+
+    #[test]
+    fn test_self_correction_multiple() {
+        let result = remove_self_corrections("Do A wait do B actually do C");
+        assert_eq!(result, "Do C");
+    }
+
+    #[test]
+    fn test_self_correction_case_insensitive() {
+        let result = remove_self_corrections("Go left ACTUALLY NO go right");
+        assert_eq!(result, "Go right");
+    }
+
+    #[test]
+    fn test_self_correction_no_trigger() {
+        let result = remove_self_corrections("This sentence has no corrections");
+        assert_eq!(result, "This sentence has no corrections");
     }
 }
