@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use outspoken_lib::audio;
 use outspoken_lib::models;
 use outspoken_lib::transcription::{TranscriptionConfig, TranscriptionService};
+use outspoken_lib::vad::VadSegmenter;
 
 #[derive(Parser)]
 #[command(name = "outspoken", version, about = "AI-powered dictation from the terminal")]
@@ -99,10 +100,10 @@ fn main() {
             model,
             copy,
             json,
-            no_vad: _,
+            no_vad,
             device,
         } => {
-            if let Err(e) = run_dictate(&model, copy, json, &device) {
+            if let Err(e) = run_dictate(&model, copy, json, no_vad, &device) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
@@ -111,11 +112,11 @@ fn main() {
             model,
             copy,
             json,
-            no_vad: _,
+            no_vad,
             device,
             silence_timeout,
         } => {
-            if let Err(e) = run_listen(&model, copy, json, &device, silence_timeout) {
+            if let Err(e) = run_listen(&model, copy, json, no_vad, &device, silence_timeout) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
@@ -168,6 +169,7 @@ fn run_dictate(
     model: &str,
     copy: bool,
     json: bool,
+    no_vad: bool,
     device: &Option<String>,
 ) -> Result<(), String> {
     let service = load_service(model)?;
@@ -203,7 +205,12 @@ fn run_dictate(
     }
 
     eprintln!("Transcribing...");
-    let result = service.transcribe(&buffer)?;
+    let result = if no_vad {
+        service.transcribe(&buffer)?
+    } else {
+        let mut vad = VadSegmenter::new()?;
+        service.transcribe_with_vad(&buffer, &mut vad)?
+    };
 
     if json {
         let output = serde_json::json!({
@@ -229,6 +236,7 @@ fn run_listen(
     model: &str,
     copy: bool,
     json: bool,
+    no_vad: bool,
     device: &Option<String>,
     silence_timeout: f32,
 ) -> Result<(), String> {
@@ -306,7 +314,12 @@ fn run_listen(
             continue;
         }
 
-        let result = service.transcribe(&buffer)?;
+        let result = if no_vad {
+            service.transcribe(&buffer)?
+        } else {
+            let mut vad = VadSegmenter::new()?;
+            service.transcribe_with_vad(&buffer, &mut vad)?
+        };
         if result.text.trim().is_empty() {
             continue;
         }
