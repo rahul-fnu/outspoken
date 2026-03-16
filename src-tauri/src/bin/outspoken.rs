@@ -4,8 +4,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
 use outspoken_lib::audio;
 use outspoken_lib::models;
+use outspoken_lib::models::DownloadStatus;
 use outspoken_lib::transcription::{TranscriptionConfig, TranscriptionService};
 use outspoken_lib::vad::VadSegmenter;
 
@@ -180,17 +182,7 @@ fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
 
     // Auto-download if not found
     eprintln!("Model '{model_name}' not found locally, downloading...");
-    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
-    let progress_map: models::ProgressMap =
-        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-    let cancellation_map: models::CancellationMap =
-        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-    let model = rt.block_on(models::download_model(
-        model_name.to_string(),
-        progress_map,
-        cancellation_map,
-    ))?;
+    let model = download_model_with_progress(model_name)?;
     eprintln!("Download complete.");
     Ok(PathBuf::from(model.path))
 }
@@ -436,18 +428,7 @@ fn run_config(action: ConfigAction) -> Result<(), String> {
         }
         ConfigAction::Download { model } => {
             eprintln!("Downloading model '{model}'...");
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {e}"))?;
-            let progress_map: models::ProgressMap =
-                Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-            let cancellation_map: models::CancellationMap =
-                Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-            let result = rt.block_on(models::download_model(
-                model,
-                progress_map,
-                cancellation_map,
-            ))?;
+            let result = download_model_with_progress(&model)?;
             println!("Downloaded: {} ({})", result.name, format_bytes(result.size_bytes));
             Ok(())
         }
@@ -464,6 +445,62 @@ fn run_config(action: ConfigAction) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn download_model_with_progress(model_name: &str) -> Result<models::DownloadedModel, String> {
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
+    let progress_map: models::ProgressMap =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let cancellation_map: models::CancellationMap =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let pb = ProgressBar::new(0);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%) {bytes_per_sec} ETA {eta}",
+        )
+        .unwrap()
+        .progress_chars("=> "),
+    );
+    pb.set_message(model_name.to_string());
+
+    let poll_map = progress_map.clone();
+    let poll_name = model_name.to_string();
+    let poll_bar = pb.clone();
+    let done = Arc::new(AtomicBool::new(false));
+    let done_flag = done.clone();
+
+    let poll_handle = std::thread::spawn(move || {
+        let poll_rt = tokio::runtime::Runtime::new().unwrap();
+        while !done_flag.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let map = poll_rt.block_on(poll_map.lock());
+            if let Some(progress) = map.get(&poll_name) {
+                if progress.total_bytes > 0 {
+                    poll_bar.set_length(progress.total_bytes);
+                    poll_bar.set_position(progress.downloaded_bytes);
+                }
+                if progress.status == DownloadStatus::Completed
+                    || progress.status == DownloadStatus::Failed
+                    || progress.status == DownloadStatus::Cancelled
+                {
+                    break;
+                }
+            }
+        }
+    });
+
+    let result = rt.block_on(models::download_model(
+        model_name.to_string(),
+        progress_map,
+        cancellation_map,
+    ));
+
+    done.store(true, Ordering::SeqCst);
+    let _ = poll_handle.join();
+    pb.finish_and_clear();
+
+    result
 }
 
 fn copy_to_clipboard(text: &str) -> Result<(), String> {
