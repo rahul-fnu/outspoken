@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useAudioLevel } from "./useAudioLevel";
 import Settings from "./components/Settings";
 import History from "./components/History";
@@ -36,8 +37,19 @@ function App() {
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string>("auto");
 
+  // Ref to track recording state for use in callbacks
+  const isRecordingRef = useRef(false);
+  isRecordingRef.current = isRecording;
+
+  // Silence detection callback — auto-stop recording
+  const handleSilenceDetected = useCallback(() => {
+    if (isRecordingRef.current) {
+      toggleRecordingRef.current();
+    }
+  }, []);
+
   // Audio level from hook
-  const { levelDb } = useAudioLevel();
+  const { levelDb } = useAudioLevel({ onSilenceDetected: handleSilenceDetected });
 
   // Normalize level for display: map -60..0 dB to 0..1
   const normalizedLevel = isRecording
@@ -66,6 +78,9 @@ function App() {
     };
   }, [isRecording]);
 
+  // Ref for toggleRecording so callbacks/effects can call it without stale closures
+  const toggleRecordingRef = useRef<() => void>(() => {});
+
   async function toggleRecording() {
     setRecordError(null);
     if (isRecording) {
@@ -88,6 +103,10 @@ function App() {
           // If post-processing fails, use raw text
         }
         setTranscription(result);
+        // Paste text into the previously active app
+        if (result.text) {
+          await invoke("insert_text", { text: result.text }).catch(() => {});
+        }
         // Auto-save to history
         if (result.text) {
           let sourceApp = "";
@@ -125,6 +144,23 @@ function App() {
       }
     }
   }
+
+  toggleRecordingRef.current = toggleRecording;
+
+  // Listen for tray-toggle-recording event from hotkey/tray system
+  useEffect(() => {
+    const unlisten = listen<string>("tray-toggle-recording", (event) => {
+      const payload = event.payload;
+      if (payload === "start" && !isRecordingRef.current) {
+        toggleRecordingRef.current();
+      } else if (payload === "stop" && isRecordingRef.current) {
+        toggleRecordingRef.current();
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   async function handleCopy() {
     if (!transcription?.text) return;
