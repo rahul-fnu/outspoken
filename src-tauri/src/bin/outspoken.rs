@@ -73,8 +73,20 @@ enum Commands {
         action: ConfigAction,
     },
 
+    /// MCP server for Claude Code plugin integration
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+
     /// Print version information
     Version,
+}
+
+#[derive(Subcommand)]
+enum McpAction {
+    /// Start the MCP JSON-RPC server on stdio
+    Serve,
 }
 
 #[derive(Subcommand)]
@@ -127,6 +139,14 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Mcp { action } => match action {
+            McpAction::Serve => {
+                if let Err(e) = outspoken_lib::mcp::run_mcp_server() {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        },
         Commands::Version => {
             println!("outspoken {}", env!("CARGO_PKG_VERSION"));
         }
