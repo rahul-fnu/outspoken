@@ -96,6 +96,7 @@ function App() {
           const settings = await invoke<{ strip_filler_words: boolean }>("get_settings");
           const processed = await invoke<string>("process_transcription_text", {
             text: result.text,
+            stripCorrections: true,
             stripFillers: settings.strip_filler_words,
           });
           result.text = processed;

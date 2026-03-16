@@ -113,6 +113,7 @@ pub fn remove_self_corrections(text: &str) -> String {
         Trigger { phrase: "scratch that", strong: true },
         Trigger { phrase: "actually no", strong: true },
         Trigger { phrase: "never mind", strong: true },
+        Trigger { phrase: "sorry i meant", strong: false },
         Trigger { phrase: "or rather", strong: false },
         Trigger { phrase: "no no", strong: true },
         Trigger { phrase: "i mean", strong: false },
@@ -154,6 +155,17 @@ pub fn remove_self_corrections(text: &str) -> String {
         let trigger_end = trigger_pos + best_len;
         let before = &result[..trigger_pos];
         let before_trimmed = before.trim_end();
+
+        // Skip "actually" when used mid-phrase (after a subject pronoun),
+        // e.g. "I actually like this" should remain unchanged.
+        if lower[trigger_pos..trigger_end] == *"actually" {
+            let preceding = before_trimmed.to_lowercase();
+            let last_word = preceding.rsplit_whitespace().next().unwrap_or("");
+            if matches!(last_word, "i" | "we" | "they" | "you" | "he" | "she" | "it") {
+                search_from = trigger_end;
+                continue;
+            }
+        }
 
         if before_trimmed.is_empty() {
             if best_strong {
@@ -578,5 +590,23 @@ mod tests {
     fn test_self_correction_no_trigger() {
         let result = remove_self_corrections("This sentence has no corrections");
         assert_eq!(result, "This sentence has no corrections");
+    }
+
+    #[test]
+    fn test_self_correction_actually_unchanged() {
+        let result = remove_self_corrections("I actually like this");
+        assert_eq!(result, "I actually like this");
+    }
+
+    #[test]
+    fn test_self_correction_hello_world() {
+        let result = remove_self_corrections("Hello world");
+        assert_eq!(result, "Hello world");
+    }
+
+    #[test]
+    fn test_self_correction_acceptance_actually_no() {
+        let result = remove_self_corrections("I want to build a new app actually no I need Claude");
+        assert_eq!(result, "I need Claude");
     }
 }
