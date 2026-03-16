@@ -171,7 +171,15 @@ fn main() {
     }
 }
 
+fn resolve_model_alias(name: &str) -> &str {
+    match name {
+        "turbo" => "large-v3-turbo-q5_0",
+        _ => name,
+    }
+}
+
 fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
+    let model_name = resolve_model_alias(model_name);
     let downloaded = models::list_downloaded_models()?;
     if let Some(m) = downloaded.iter().find(|m| m.name == model_name) {
         let path = PathBuf::from(&m.path);
@@ -413,20 +421,25 @@ fn run_config(action: ConfigAction) -> Result<(), String> {
             let downloaded = models::list_downloaded_models().unwrap_or_default();
             let downloaded_names: Vec<&str> = downloaded.iter().map(|m| m.name.as_str()).collect();
 
-            println!("{:<30} {:<12} {}", "MODEL", "SIZE", "STATUS");
-            println!("{}", "-".repeat(56));
+            println!("{:<30} {:<10} {:<12} {}", "MODEL", "ALIAS", "SIZE", "STATUS");
+            println!("{}", "-".repeat(68));
             for model in &available {
                 let status = if downloaded_names.contains(&model.name.as_str()) {
                     "downloaded"
                 } else {
                     "not downloaded"
                 };
+                let alias = match model.name.as_str() {
+                    "large-v3-turbo-q5_0" => "turbo",
+                    _ => "",
+                };
                 let size = format_bytes(model.size_bytes);
-                println!("{:<30} {:<12} {}", model.name, size, status);
+                println!("{:<30} {:<10} {:<12} {}", model.name, alias, size, status);
             }
             Ok(())
         }
         ConfigAction::Download { model } => {
+            let model = resolve_model_alias(&model).to_string();
             eprintln!("Downloading model '{model}'...");
             let result = download_model_with_progress(&model)?;
             println!("Downloaded: {} ({})", result.name, format_bytes(result.size_bytes));
