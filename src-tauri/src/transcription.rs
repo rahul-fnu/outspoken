@@ -4,6 +4,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+const SAMPLE_RATE: usize = 16000;
+
 use crate::audio_preprocess::normalize_gain;
 use crate::vad::VadSegmenter;
 
@@ -244,6 +246,36 @@ impl TranscriptionService {
                 .unwrap_or_else(|| "unknown".into()),
             duration_ms,
         })
+    }
+
+    pub fn transcribe_streaming(
+        &self,
+        buffer: &mut Vec<f32>,
+        audio_chunk: &[f32],
+        is_final: bool,
+    ) -> Result<TranscriptionResult, String> {
+        buffer.extend_from_slice(audio_chunk);
+
+        if !is_final && buffer.len() < SAMPLE_RATE {
+            return Ok(TranscriptionResult {
+                text: String::new(),
+                segments: Vec::new(),
+                language: self
+                    .config
+                    .language
+                    .clone()
+                    .unwrap_or_else(|| "en".into()),
+                duration_ms: 0,
+            });
+        }
+
+        let result = self.transcribe(buffer)?;
+
+        if is_final {
+            buffer.clear();
+        }
+
+        Ok(result)
     }
 }
 

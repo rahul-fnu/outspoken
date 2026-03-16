@@ -11,23 +11,9 @@ use outspoken_lib::models::DownloadStatus;
 use outspoken_lib::transcription::{TranscriptionConfig, TranscriptionService};
 use outspoken_lib::vad::VadSegmenter;
 
-static QUIET: AtomicBool = AtomicBool::new(false);
-
-macro_rules! status {
-    ($($arg:tt)*) => {
-        if !QUIET.load(Ordering::Relaxed) {
-            eprintln!($($arg)*);
-        }
-    };
-}
-
 #[derive(Parser)]
 #[command(name = "outspoken", version, about = "AI-powered dictation from the terminal")]
 struct Cli {
-    /// Suppress all status messages on stderr (for clean piping)
-    #[arg(short, long, global = true)]
-    quiet: bool,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -136,10 +122,6 @@ enum ConfigAction {
 fn main() {
     let cli = Cli::parse();
 
-    if cli.quiet {
-        QUIET.store(true, Ordering::Relaxed);
-    }
-
     match cli.command {
         Commands::Dictate {
             model,
@@ -207,9 +189,9 @@ fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
     }
 
     // Auto-download if not found
-    status!("Model '{model_name}' not found locally, downloading...");
+    eprintln!("Model '{model_name}' not found locally, downloading...");
     let model = download_model_with_progress(model_name)?;
-    status!("Download complete.");
+    eprintln!("Download complete.");
     Ok(PathBuf::from(model.path))
 }
 
@@ -237,7 +219,7 @@ fn run_dictate(
     })
     .map_err(|e| format!("Failed to set Ctrl+C handler: {e}"))?;
 
-    status!("Recording... press Ctrl+C to stop and transcribe.");
+    eprintln!("Recording... press Ctrl+C to stop and transcribe.");
     let recording = audio::start_capture(device, None)?;
 
     if stream {
@@ -245,13 +227,20 @@ fn run_dictate(
         let stream_buffer = recording.buffer.clone();
         let stream_service = load_service(model)?;
         std::thread::spawn(move || {
+            let mut last_transcribed_len: usize = 0;
+            let mut full_text = String::new();
             while stream_running.load(Ordering::SeqCst) {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 if !stream_running.load(Ordering::SeqCst) {
                     break;
                 }
-                let snapshot = match stream_buffer.lock() {
-                    Ok(buf) => buf.clone(),
+                let (snapshot, new_len) = match stream_buffer.lock() {
+                    Ok(buf) => {
+                        if buf.len() <= last_transcribed_len {
+                            continue;
+                        }
+                        (buf[last_transcribed_len..].to_vec(), buf.len())
+                    }
                     Err(_) => continue,
                 };
                 if snapshot.is_empty() {
@@ -259,11 +248,16 @@ fn run_dictate(
                 }
                 if let Ok(result) = stream_service.transcribe(&snapshot) {
                     let text = result.text.trim();
-                    if !text.is_empty() && !QUIET.load(Ordering::Relaxed) {
-                        eprint!("\r\x1b[2K{}", text);
+                    if !text.is_empty() {
+                        if !full_text.is_empty() {
+                            full_text.push(' ');
+                        }
+                        full_text.push_str(text);
+                        eprint!("\r\x1b[2K{}", full_text);
                         let _ = std::io::stderr().flush();
                     }
                 }
+                last_transcribed_len = new_len;
             }
         });
     }
@@ -273,7 +267,7 @@ fn run_dictate(
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    if stream && !QUIET.load(Ordering::Relaxed) {
+    if stream {
         eprint!("\r\x1b[2K");
         let _ = std::io::stderr().flush();
     }
@@ -292,7 +286,7 @@ fn run_dictate(
         return Err("No audio recorded".into());
     }
 
-    status!("Transcribing...");
+    eprintln!("Transcribing...");
     let result = if no_vad {
         service.transcribe(&buffer)?
     } else {
@@ -314,7 +308,7 @@ fn run_dictate(
 
     if copy {
         copy_to_clipboard(&result.text)?;
-        status!("Copied to clipboard.");
+        eprintln!("Copied to clipboard.");
     }
 
     Ok(())
@@ -337,7 +331,7 @@ fn run_listen(
     })
     .map_err(|e| format!("Failed to set Ctrl+C handler: {e}"))?;
 
-    status!("Listening... press Ctrl+C to stop.");
+    eprintln!("Listening... press Ctrl+C to stop.");
 
     let max_wait = std::time::Duration::from_secs_f32(silence_timeout);
 
@@ -474,7 +468,7 @@ fn run_config(action: ConfigAction) -> Result<(), String> {
         }
         ConfigAction::Download { model } => {
             let model = resolve_model_alias(&model).to_string();
-            status!("Downloading model '{model}'...");
+            eprintln!("Downloading model '{model}'...");
             let result = download_model_with_progress(&model)?;
             println!("Downloaded: {} ({})", result.name, format_bytes(result.size_bytes));
             Ok(())
@@ -501,20 +495,15 @@ fn download_model_with_progress(model_name: &str) -> Result<models::DownloadedMo
     let cancellation_map: models::CancellationMap =
         Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-    let pb = if QUIET.load(Ordering::Relaxed) {
-        ProgressBar::hidden()
-    } else {
-        let pb = ProgressBar::new(0);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%) {bytes_per_sec} ETA {eta}",
-            )
-            .unwrap()
-            .progress_chars("=> "),
-        );
-        pb.set_message(model_name.to_string());
-        pb
-    };
+    let pb = ProgressBar::new(0);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%) {bytes_per_sec} ETA {eta}",
+        )
+        .unwrap()
+        .progress_chars("=> "),
+    );
+    pb.set_message(model_name.to_string());
 
     let poll_map = progress_map.clone();
     let poll_name = model_name.to_string();
