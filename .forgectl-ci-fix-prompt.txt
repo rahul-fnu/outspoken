@@ -1,7 +1,7 @@
 The CI build is failing on this branch. Here are the error logs:
 
-.github:95: Process completed with exit code 1.
 .github:51: Process completed with exit code 101.
+.github:95: Process completed with exit code 1.
 .github:51: Process completed with exit code 101.
 
 Fix the build errors. Rules:
