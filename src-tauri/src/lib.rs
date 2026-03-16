@@ -531,6 +531,36 @@ fn delete_custom_prompt(id: i64) -> Result<(), String> {
 }
 
 #[cfg(feature = "desktop")]
+#[tauri::command]
+fn enable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .enable()
+        .map_err(|e| format!("Failed to enable autostart: {e}"))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn disable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .disable()
+        .map_err(|e| format!("Failed to disable autostart: {e}"))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn is_autostart_enabled(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Failed to check autostart status: {e}"))
+}
+
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -551,6 +581,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(progress_map)
         .manage(cancellation_map)
         .manage(audio_state)
@@ -610,6 +641,9 @@ pub fn run() {
             list_ai_prompts,
             save_custom_prompt,
             delete_custom_prompt,
+            enable_autostart,
+            disable_autostart,
+            is_autostart_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

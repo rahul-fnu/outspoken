@@ -13,6 +13,7 @@ interface AppSettings {
   personal_dictionary: string[];
   openai_api_key?: string;
   anthropic_api_key?: string;
+  launch_at_login: boolean;
 }
 
 interface ModelInfo {
@@ -399,12 +400,24 @@ export default function Settings({
                 : `Manual selection: ${selectedLanguage}`}
             </div>
 
-            <h2 style={{ ...styles.sectionTitle, marginTop: 24 }}>Auto-start at Login</h2>
+            <h2 style={{ ...styles.sectionTitle, marginTop: 24 }}>Launch at Login</h2>
             <label style={styles.checkboxLabel}>
               <input
                 type="checkbox"
-                checked={settings.auto_start}
-                onChange={(e) => updateField("auto_start", e.target.checked)}
+                checked={settings.launch_at_login}
+                onChange={async (e) => {
+                  const enabled = e.target.checked;
+                  try {
+                    if (enabled) {
+                      await invoke("enable_autostart");
+                    } else {
+                      await invoke("disable_autostart");
+                    }
+                    updateField("launch_at_login", enabled);
+                  } catch (err) {
+                    setError(String(err));
+                  }
+                }}
               />
               <span>Launch Outspoken automatically when you log in</span>
             </label>
