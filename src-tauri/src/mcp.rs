@@ -45,7 +45,7 @@ impl McpServer {
     }
 
     fn ensure_model_loaded(&self) -> Result<(), String> {
-        let svc = self.transcription_service.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let svc = self.transcription_service.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
         if svc.is_some() {
             return Ok(());
         }
@@ -62,7 +62,7 @@ impl McpServer {
                 return Err(format!("Model file not found: {}", m.path));
             }
         } else {
-            eprintln!("No models found, auto-downloading '{default_model}'...");
+            eprintln!("No whisper model found. The model will be downloaded automatically (400MB)...");
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| format!("Failed to create runtime: {e}"))?;
             let progress_map: models::ProgressMap =
@@ -87,16 +87,16 @@ impl McpServer {
         let config = TranscriptionConfig::default();
         let service = TranscriptionService::new(&model_path, config)?;
 
-        let mut svc = self.transcription_service.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let mut svc = self.transcription_service.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
         *svc = Some(service);
-        let mut name = self.loaded_model_name.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let mut name = self.loaded_model_name.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
         *name = Some(model_name);
         Ok(())
     }
 
     fn record_audio(&self, timeout_secs: f64) -> Result<Vec<f32>, String> {
         {
-            let mut state = self.state.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let mut state = self.state.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
             *state = McpState::Recording;
         }
 
@@ -119,7 +119,7 @@ impl McpServer {
             let buf = recording
                 .buffer
                 .lock()
-                .map_err(|e| format!("Lock error: {e}"))?;
+                .map_err(|_| "Internal error — please report this bug".to_string())?;
             let len = buf.len();
 
             if len == 0 {
@@ -147,11 +147,11 @@ impl McpServer {
         let buffer = recording
             .buffer
             .lock()
-            .map_err(|e| format!("Lock error: {e}"))?
+            .map_err(|_| "Internal error — please report this bug".to_string())?
             .clone();
 
         {
-            let mut state = self.state.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let mut state = self.state.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
             *state = McpState::Idle;
         }
 
@@ -160,17 +160,17 @@ impl McpServer {
 
     fn transcribe(&self, audio_data: &[f32]) -> Result<(String, u64), String> {
         {
-            let mut state = self.state.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let mut state = self.state.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
             *state = McpState::Transcribing;
         }
 
-        let svc = self.transcription_service.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let svc = self.transcription_service.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
         let service = svc.as_ref().ok_or("No model loaded")?;
         let mut vad = VadSegmenter::new()?;
         let result = service.transcribe_with_vad(audio_data, &mut vad);
 
         {
-            let mut state = self.state.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let mut state = self.state.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
             *state = McpState::Idle;
         }
 
@@ -256,8 +256,8 @@ impl McpServer {
     }
 
     fn handle_get_status(&self) -> Result<Value, String> {
-        let state = self.state.lock().map_err(|e| format!("Lock error: {e}"))?;
-        let model_name = self.loaded_model_name.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let state = self.state.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
+        let model_name = self.loaded_model_name.lock().map_err(|_| "Internal error — please report this bug".to_string())?;
 
         let downloaded = models::list_downloaded_models().unwrap_or_default();
         let models_info: Vec<Value> = downloaded

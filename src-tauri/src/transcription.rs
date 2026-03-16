@@ -69,7 +69,7 @@ impl TranscriptionService {
             model_path.to_str().ok_or("Invalid model path")?,
             params,
         )
-        .map_err(|e| format!("Failed to load whisper model: {e}"))?;
+        .map_err(|e| format!("Failed to load model: {e}. The file may be corrupted. Try: `outspoken config download large-v3-turbo-q5_0` to re-download."))?;
 
         Ok(Self {
             ctx: Arc::new(ctx),

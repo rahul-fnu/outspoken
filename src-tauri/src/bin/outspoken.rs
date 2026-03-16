@@ -189,7 +189,7 @@ fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
     }
 
     // Auto-download if not found
-    eprintln!("Model '{model_name}' not found locally, downloading...");
+    eprintln!("Model '{model_name}' not found. Downloading... (use `outspoken config models` to see available models)");
     let model = download_model_with_progress(model_name)?;
     eprintln!("Download complete.");
     Ok(PathBuf::from(model.path))
@@ -267,11 +267,11 @@ fn run_dictate(
     let buffer = recording
         .buffer
         .lock()
-        .map_err(|e| format!("Lock error: {e}"))?
+        .map_err(|_| "Internal error — please report this bug".to_string())?
         .clone();
 
     if buffer.is_empty() {
-        return Err("No audio recorded".into());
+        return Err("No audio recorded. Check that your microphone is connected and permissions are granted. Run `outspoken config devices` to list available devices.".into());
     }
 
     eprintln!("Transcribing...");
@@ -344,7 +344,7 @@ fn run_listen(
             let buf = recording
                 .buffer
                 .lock()
-                .map_err(|e| format!("Lock error: {e}"))?;
+                .map_err(|_| "Internal error — please report this bug".to_string())?;
 
             if buf.len() < 16000 {
                 continue;
@@ -393,7 +393,7 @@ fn run_listen(
         let buffer = recording
             .buffer
             .lock()
-            .map_err(|e| format!("Lock error: {e}"))?
+            .map_err(|_| "Internal error — please report this bug".to_string())?
             .clone();
 
         if buffer.is_empty() {
