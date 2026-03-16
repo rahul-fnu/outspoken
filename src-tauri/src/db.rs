@@ -82,6 +82,11 @@ pub fn open_db() -> Result<Connection, String> {
             name TEXT NOT NULL,
             prompt TEXT NOT NULL,
             app_pattern TEXT DEFAULT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS app_format_profiles (
+            app_identifier TEXT PRIMARY KEY,
+            profile_name TEXT NOT NULL
         );",
     )
     .map_err(|e| format!("Failed to initialize database: {e}"))?;

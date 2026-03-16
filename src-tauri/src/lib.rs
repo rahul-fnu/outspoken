@@ -50,8 +50,6 @@ type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
 type SilenceConfigState = Arc<std::sync::Mutex<SilenceConfig>>;
 #[cfg(feature = "desktop")]
 type TranscriptionServiceState = Arc<std::sync::Mutex<Option<TranscriptionService>>>;
-#[cfg(feature = "desktop")]
-type StreamingBufferState = Arc<std::sync::Mutex<Vec<f32>>>;
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
@@ -285,45 +283,60 @@ async fn transcribe_recording(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 async fn transcribe_streaming_chunk(
-    audio_samples: Vec<f32>,
-    is_final: bool,
+    audio_state: tauri::State<'_, AudioState>,
     service_state: tauri::State<'_, TranscriptionServiceState>,
-    streaming_buffer: tauri::State<'_, StreamingBufferState>,
 ) -> Result<TranscriptionResult, String> {
+    // Extract everything we need synchronously before any await points.
+    // This avoids lifetime/Send issues with MutexGuard holding non-Send types.
+    let audio_arc = audio_state.inner().clone();
+    let service_arc = service_state.inner().clone();
+
+    let (audio_data, service) = snapshot_for_streaming(audio_arc, service_arc)?;
+
+    if audio_data.is_empty() {
+        return Ok(TranscriptionResult {
+            text: String::new(),
+            segments: Vec::new(),
+            language: String::new(),
+            duration_ms: 0,
+        });
+    }
+
+    let result = tokio::task::spawn_blocking(move || service.transcribe(&audio_data))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))??;
+
+    Ok(result)
+}
+
+/// Synchronous helper to snapshot audio buffer and clone transcription service.
+/// Kept separate so no MutexGuard lives across async boundaries.
+#[cfg(feature = "desktop")]
+fn snapshot_for_streaming(
+    audio_arc: AudioState,
+    service_arc: TranscriptionServiceState,
+) -> Result<(Vec<f32>, TranscriptionService), String> {
+    let audio_data = {
+        let state = audio_arc.lock().map_err(|e| format!("Lock error: {e}"))?;
+        match state.as_ref() {
+            Some(recording) => recording
+                .buffer
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?
+                .clone(),
+            None => return Err("Not currently recording".into()),
+        }
+    };
+
     let service = {
-        let state = service_state
-            .lock()
-            .map_err(|e| format!("Lock error: {e}"))?;
+        let state = service_arc.lock().map_err(|e| format!("Lock error: {e}"))?;
         state
             .as_ref()
-            .ok_or("No transcription model loaded. Call load_transcription_model first.")?
+            .ok_or("No transcription model loaded.")?
             .clone()
     };
 
-    let mut buffer = {
-        let buf = streaming_buffer
-            .lock()
-            .map_err(|e| format!("Lock error: {e}"))?;
-        buf.clone()
-    };
-
-    let result = tokio::task::spawn_blocking(move || {
-        service.transcribe_streaming(&mut buffer, &audio_samples, is_final)
-            .map(|r| (r, buffer))
-    })
-    .await
-    .map_err(|e| format!("Task join error: {e}"))??;
-
-    let (transcription_result, updated_buffer) = result;
-
-    {
-        let mut buf = streaming_buffer
-            .lock()
-            .map_err(|e| format!("Lock error: {e}"))?;
-        *buf = updated_buffer;
-    }
-
-    Ok(transcription_result)
+    Ok((audio_data, service))
 }
 
 #[cfg(feature = "desktop")]
@@ -577,6 +590,36 @@ fn delete_custom_prompt(id: i64) -> Result<(), String> {
 }
 
 #[cfg(feature = "desktop")]
+#[tauri::command]
+fn enable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .enable()
+        .map_err(|e| format!("Failed to enable autostart: {e}"))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn disable_autostart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .disable()
+        .map_err(|e| format!("Failed to disable autostart: {e}"))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn is_autostart_enabled(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app_handle
+        .autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Failed to check autostart status: {e}"))
+}
+
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let progress_map: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
@@ -587,8 +630,6 @@ pub fn run() {
         Arc::new(std::sync::Mutex::new(SilenceConfig::default()));
     let transcription_service: TranscriptionServiceState =
         Arc::new(std::sync::Mutex::new(None));
-    let streaming_buffer: StreamingBufferState =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
     let tray_recording_state: TrayRecordingState =
         Arc::new(std::sync::atomic::AtomicU8::new(TrayState::Idle as u8));
     let hotkey_config: HotkeyConfigState =
@@ -599,13 +640,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(progress_map)
         .manage(cancellation_map)
         .manage(audio_state)
         .manage(selected_device)
         .manage(silence_config)
         .manage(transcription_service)
-        .manage(streaming_buffer)
         .manage(tray_recording_state)
         .manage(hotkey_config)
         .manage(app_settings)
@@ -660,6 +701,9 @@ pub fn run() {
             list_ai_prompts,
             save_custom_prompt,
             delete_custom_prompt,
+            enable_autostart,
+            disable_autostart,
+            is_autostart_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
