@@ -68,6 +68,13 @@ pub struct RecordingState {
     _stream: cpal::Stream,
 }
 
+// SAFETY: RecordingState is only accessed behind a std::sync::Mutex which
+// guarantees exclusive access. cpal::Stream itself is thread-safe in practice
+// (it manages its own audio thread internally), but does not implement Send
+// because it holds a raw pointer internally. We ensure the stream is never
+// moved across threads without synchronisation.
+unsafe impl Send for RecordingState {}
+
 /// Start capturing audio from the specified device (or default).
 /// Returns a `RecordingState` that accumulates 16kHz mono f32 samples.
 /// If `sample_callback` is provided, it will be called with each chunk of

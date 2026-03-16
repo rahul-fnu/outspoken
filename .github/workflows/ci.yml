@@ -54,6 +54,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libssl-dev \
+            libxdo-dev \
             pkg-config \
             wget \
             file \

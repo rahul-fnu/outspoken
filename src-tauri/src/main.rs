@@ -13,5 +13,6 @@ fn main() {
         return;
     }
 
+    #[cfg(feature = "desktop")]
     outspoken_lib::run()
 }

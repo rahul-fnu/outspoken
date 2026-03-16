@@ -160,12 +160,11 @@ impl TranscriptionService {
             segments.retain(|s| !s.text.is_empty());
         }
 
-        let detected_language = state
-            .full_lang_id_from_state()
-            .ok()
-            .and_then(|id| whisper_rs::standalone::get_lang_str(id).map(|s| s.to_string()))
-            .or_else(|| self.config.language.clone())
-            .unwrap_or_else(|| "unknown".into());
+        let detected_language = self
+            .config
+            .language
+            .clone()
+            .unwrap_or_else(|| "en".into());
         let duration_ms = start.elapsed().as_millis() as u64;
 
         Ok(TranscriptionResult {
@@ -215,15 +214,8 @@ impl TranscriptionService {
         let mut detected_language = None;
 
         for speech in &speech_segments {
-            let end_idx = speech.end.min(audio.len());
-            if speech.start >= end_idx {
-                continue;
-            }
-
-            let segment_audio = &audio[speech.start..end_idx];
-
             // Apply gain normalization to the segment
-            let normalized = normalize_gain(segment_audio);
+            let normalized = normalize_gain(&speech.audio);
 
             // Transcribe the normalized segment
             let seg_result = self.transcribe(&normalized)?;
@@ -234,7 +226,7 @@ impl TranscriptionService {
             }
 
             // Offset timestamps to be relative to original audio
-            let offset_ms = (speech.start as f64 / sample_rate * 1000.0) as i64;
+            let offset_ms = (speech.start_sample as f64 / sample_rate * 1000.0) as i64;
 
             for seg in seg_result.segments {
                 let adjusted = Segment {
@@ -282,23 +274,33 @@ pub fn supported_languages() -> Vec<SupportedLanguage> {
     }]
 }
 
-/// Returns the list of languages supported by Whisper, queried from whisper.cpp.
+/// Returns the list of languages supported by Whisper.
+/// Note: whisper_rs::standalone is no longer public in newer versions,
+/// so we return a curated list of common Whisper-supported languages.
 #[cfg(feature = "multilingual")]
 pub fn supported_languages() -> Vec<SupportedLanguage> {
-    let max_id = whisper_rs::standalone::get_lang_max_id();
-    let mut languages = Vec::new();
-    for id in 0..=max_id {
-        if let (Some(code), Some(name)) = (
-            whisper_rs::standalone::get_lang_str(id),
-            whisper_rs::standalone::get_lang_str_full(id),
-        ) {
-            languages.push(SupportedLanguage {
-                code: code.to_string(),
-                name: name.to_string(),
-            });
-        }
-    }
+    let languages = [
+        ("en", "English"), ("zh", "Chinese"), ("de", "German"), ("es", "Spanish"),
+        ("ru", "Russian"), ("ko", "Korean"), ("fr", "French"), ("ja", "Japanese"),
+        ("pt", "Portuguese"), ("tr", "Turkish"), ("pl", "Polish"), ("ca", "Catalan"),
+        ("nl", "Dutch"), ("ar", "Arabic"), ("sv", "Swedish"), ("it", "Italian"),
+        ("id", "Indonesian"), ("hi", "Hindi"), ("fi", "Finnish"), ("vi", "Vietnamese"),
+        ("he", "Hebrew"), ("uk", "Ukrainian"), ("el", "Greek"), ("ms", "Malay"),
+        ("cs", "Czech"), ("ro", "Romanian"), ("da", "Danish"), ("hu", "Hungarian"),
+        ("ta", "Tamil"), ("no", "Norwegian"), ("th", "Thai"), ("ur", "Urdu"),
+        ("hr", "Croatian"), ("bg", "Bulgarian"), ("lt", "Lithuanian"), ("la", "Latin"),
+        ("mi", "Maori"), ("ml", "Malayalam"), ("cy", "Welsh"), ("sk", "Slovak"),
+        ("te", "Telugu"), ("fa", "Persian"), ("lv", "Latvian"), ("bn", "Bengali"),
+        ("sr", "Serbian"), ("az", "Azerbaijani"), ("sl", "Slovenian"), ("kn", "Kannada"),
+        ("et", "Estonian"), ("mk", "Macedonian"),
+    ];
     languages
+        .iter()
+        .map(|(code, name)| SupportedLanguage {
+            code: code.to_string(),
+            name: name.to_string(),
+        })
+        .collect()
 }
 
 /// Remove common filler words using simple regex-based replacement.

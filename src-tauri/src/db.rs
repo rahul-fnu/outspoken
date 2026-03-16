@@ -94,7 +94,7 @@ pub fn open_db() -> Result<Connection, String> {
 
 fn migrate_old_databases(conn: &Connection) -> Result<(), String> {
     let dir = data_dir()?;
-    let old_files = [
+    let old_files: [(&str, fn(&Connection, &PathBuf) -> Result<(), String>); 4] = [
         ("models.db", migrate_models),
         ("dictionary.db", migrate_dictionary),
         ("history.db", migrate_history),
