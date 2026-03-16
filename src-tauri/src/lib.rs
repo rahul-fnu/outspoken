@@ -50,6 +50,8 @@ type SelectedDevice = Arc<std::sync::Mutex<Option<String>>>;
 type SilenceConfigState = Arc<std::sync::Mutex<SilenceConfig>>;
 #[cfg(feature = "desktop")]
 type TranscriptionServiceState = Arc<std::sync::Mutex<Option<TranscriptionService>>>;
+#[cfg(feature = "desktop")]
+type StreamingBufferState = Arc<std::sync::Mutex<Vec<f32>>>;
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
@@ -278,6 +280,50 @@ async fn transcribe_recording(
         .map_err(|e| format!("Task join error: {e}"))??;
 
     Ok(result)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn transcribe_streaming_chunk(
+    audio_samples: Vec<f32>,
+    is_final: bool,
+    service_state: tauri::State<'_, TranscriptionServiceState>,
+    streaming_buffer: tauri::State<'_, StreamingBufferState>,
+) -> Result<TranscriptionResult, String> {
+    let service = {
+        let state = service_state
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        state
+            .as_ref()
+            .ok_or("No transcription model loaded. Call load_transcription_model first.")?
+            .clone()
+    };
+
+    let mut buffer = {
+        let buf = streaming_buffer
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        buf.clone()
+    };
+
+    let result = tokio::task::spawn_blocking(move || {
+        service.transcribe_streaming(&mut buffer, &audio_samples, is_final)
+            .map(|r| (r, buffer))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))??;
+
+    let (transcription_result, updated_buffer) = result;
+
+    {
+        let mut buf = streaming_buffer
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        *buf = updated_buffer;
+    }
+
+    Ok(transcription_result)
 }
 
 #[cfg(feature = "desktop")]
@@ -541,6 +587,8 @@ pub fn run() {
         Arc::new(std::sync::Mutex::new(SilenceConfig::default()));
     let transcription_service: TranscriptionServiceState =
         Arc::new(std::sync::Mutex::new(None));
+    let streaming_buffer: StreamingBufferState =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
     let tray_recording_state: TrayRecordingState =
         Arc::new(std::sync::atomic::AtomicU8::new(TrayState::Idle as u8));
     let hotkey_config: HotkeyConfigState =
@@ -557,6 +605,7 @@ pub fn run() {
         .manage(selected_device)
         .manage(silence_config)
         .manage(transcription_service)
+        .manage(streaming_buffer)
         .manage(tray_recording_state)
         .manage(hotkey_config)
         .manage(app_settings)
@@ -583,6 +632,7 @@ pub fn run() {
             set_silence_config,
             load_transcription_model,
             transcribe_recording,
+            transcribe_streaming_chunk,
             list_supported_languages,
             set_tray_state,
             insert_text,
