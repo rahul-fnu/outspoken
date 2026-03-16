@@ -1,8 +1,9 @@
-/// Energy-based Voice Activity Detection.
+/// Energy-based Voice Activity Detection with spectral flux and zero-crossing rate.
 ///
-/// Uses RMS energy with adaptive thresholding to detect speech segments.
-/// Not as accurate as neural VAD (Silero) but has zero dependencies and
-/// eliminates Whisper hallucinations on silence effectively.
+/// Uses RMS energy, zero-crossing rate, and spectral flux with adaptive
+/// thresholding to detect speech segments. Not as accurate as neural VAD
+/// (Silero) but has zero dependencies and eliminates Whisper hallucinations
+/// on silence effectively.
 
 const SAMPLE_RATE: usize = 16000;
 /// Frame size for energy calculation: 30ms at 16kHz
@@ -13,6 +14,13 @@ const MIN_SPEECH_FRAMES: usize = 9; // ~270ms at 30ms/frame
 const MIN_SILENCE_FRAMES: usize = 10; // ~300ms at 30ms/frame
 /// Padding around speech segments in samples (300ms)
 const PADDING_SAMPLES: usize = SAMPLE_RATE * 300 / 1000; // 4800
+
+/// ZCR range for speech (per 30ms frame of 480 samples)
+const ZCR_MIN: usize = 20;
+const ZCR_MAX: usize = 200;
+
+/// Minimum spectral flux (dB change between frames) for speech
+const SPECTRAL_FLUX_THRESHOLD: f32 = 0.5;
 
 /// A segment of detected speech audio.
 #[derive(Debug, Clone)]
@@ -46,15 +54,40 @@ impl VadSegmenter {
             return Ok(Vec::new());
         }
 
+        let frames: Vec<&[f32]> = audio.chunks(FRAME_SIZE).collect();
+        let num_frames = frames.len();
+
         // Calculate per-frame energy in dB
-        let frame_energies: Vec<f32> = audio
-            .chunks(FRAME_SIZE)
+        let frame_energies: Vec<f32> = frames
+            .iter()
             .map(|frame| {
                 let rms = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
                 if rms > 0.0 {
                     20.0 * rms.log10()
                 } else {
                     -80.0
+                }
+            })
+            .collect();
+
+        // Calculate per-frame zero-crossing rate
+        let frame_zcr: Vec<usize> = frames
+            .iter()
+            .map(|frame| {
+                frame
+                    .windows(2)
+                    .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
+                    .count()
+            })
+            .collect();
+
+        // Calculate spectral flux (absolute energy change between consecutive frames)
+        let spectral_flux: Vec<f32> = (0..num_frames)
+            .map(|i| {
+                if i == 0 {
+                    frame_energies[0].abs()
+                } else {
+                    (frame_energies[i] - frame_energies[i - 1]).abs()
                 }
             })
             .collect();
@@ -68,10 +101,17 @@ impl VadSegmenter {
         let noise_floor = sorted_energies[sorted_energies.len() / 10]; // 10th percentile
         let adaptive_threshold = self.threshold_db.max(noise_floor + 10.0);
 
-        // Label each frame as speech or silence
-        let is_speech: Vec<bool> = frame_energies
-            .iter()
-            .map(|&e| e > adaptive_threshold)
+        // Label each frame as speech only when ALL conditions are met:
+        // 1. Energy above adaptive threshold
+        // 2. ZCR in speech range
+        // 3. Spectral flux above threshold
+        let is_speech: Vec<bool> = (0..num_frames)
+            .map(|i| {
+                frame_energies[i] > adaptive_threshold
+                    && frame_zcr[i] >= ZCR_MIN
+                    && frame_zcr[i] <= ZCR_MAX
+                    && spectral_flux[i] > SPECTRAL_FLUX_THRESHOLD
+            })
             .collect();
 
         // Find speech regions (runs of speech frames)
