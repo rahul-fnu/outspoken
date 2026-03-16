@@ -1,10 +1,13 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
 use outspoken_lib::audio;
 use outspoken_lib::models;
+use outspoken_lib::models::DownloadStatus;
 use outspoken_lib::transcription::{TranscriptionConfig, TranscriptionService};
 use outspoken_lib::vad::VadSegmenter;
 
@@ -42,6 +45,10 @@ enum Commands {
         /// Audio input device name
         #[arg(long)]
         device: Option<String>,
+
+        /// Stream partial transcriptions to stderr during recording
+        #[arg(long)]
+        stream: bool,
     },
 
     /// Continuous mode - transcribe each utterance as a new line
@@ -123,8 +130,9 @@ fn main() {
             no_vad,
             no_corrections: _,
             device,
+            stream,
         } => {
-            if let Err(e) = run_dictate(&model, copy, json, no_vad, &device) {
+            if let Err(e) = run_dictate(&model, copy, json, no_vad, &device, stream) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
@@ -163,7 +171,15 @@ fn main() {
     }
 }
 
+fn resolve_model_alias(name: &str) -> &str {
+    match name {
+        "turbo" => "large-v3-turbo-q5_0",
+        _ => name,
+    }
+}
+
 fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
+    let model_name = resolve_model_alias(model_name);
     let downloaded = models::list_downloaded_models()?;
     if let Some(m) = downloaded.iter().find(|m| m.name == model_name) {
         let path = PathBuf::from(&m.path);
@@ -174,17 +190,7 @@ fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
 
     // Auto-download if not found
     eprintln!("Model '{model_name}' not found locally, downloading...");
-    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
-    let progress_map: models::ProgressMap =
-        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-    let cancellation_map: models::CancellationMap =
-        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-    let model = rt.block_on(models::download_model(
-        model_name.to_string(),
-        progress_map,
-        cancellation_map,
-    ))?;
+    let model = download_model_with_progress(model_name)?;
     eprintln!("Download complete.");
     Ok(PathBuf::from(model.path))
 }
@@ -201,6 +207,7 @@ fn run_dictate(
     json: bool,
     no_vad: bool,
     device: &Option<String>,
+    stream: bool,
 ) -> Result<(), String> {
     let service = load_service(model)?;
 
@@ -215,9 +222,42 @@ fn run_dictate(
     eprintln!("Recording... press Ctrl+C to stop and transcribe.");
     let recording = audio::start_capture(device, None)?;
 
+    if stream {
+        let stream_running = running.clone();
+        let stream_buffer = recording.buffer.clone();
+        let stream_service = load_service(model)?;
+        std::thread::spawn(move || {
+            while stream_running.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if !stream_running.load(Ordering::SeqCst) {
+                    break;
+                }
+                let snapshot = match stream_buffer.lock() {
+                    Ok(buf) => buf.clone(),
+                    Err(_) => continue,
+                };
+                if snapshot.is_empty() {
+                    continue;
+                }
+                if let Ok(result) = stream_service.transcribe(&snapshot) {
+                    let text = result.text.trim();
+                    if !text.is_empty() {
+                        eprint!("\r\x1b[2K{}", text);
+                        let _ = std::io::stderr().flush();
+                    }
+                }
+            }
+        });
+    }
+
     // Wait for Ctrl+C
     while running.load(Ordering::SeqCst) {
         std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    if stream {
+        eprint!("\r\x1b[2K");
+        let _ = std::io::stderr().flush();
     }
 
     // Stop recording
@@ -397,33 +437,27 @@ fn run_config(action: ConfigAction) -> Result<(), String> {
             let downloaded = models::list_downloaded_models().unwrap_or_default();
             let downloaded_names: Vec<&str> = downloaded.iter().map(|m| m.name.as_str()).collect();
 
-            println!("{:<30} {:<12} {}", "MODEL", "SIZE", "STATUS");
-            println!("{}", "-".repeat(56));
+            println!("{:<30} {:<10} {:<12} {}", "MODEL", "ALIAS", "SIZE", "STATUS");
+            println!("{}", "-".repeat(68));
             for model in &available {
                 let status = if downloaded_names.contains(&model.name.as_str()) {
                     "downloaded"
                 } else {
                     "not downloaded"
                 };
+                let alias = match model.name.as_str() {
+                    "large-v3-turbo-q5_0" => "turbo",
+                    _ => "",
+                };
                 let size = format_bytes(model.size_bytes);
-                println!("{:<30} {:<12} {}", model.name, size, status);
+                println!("{:<30} {:<10} {:<12} {}", model.name, alias, size, status);
             }
             Ok(())
         }
         ConfigAction::Download { model } => {
+            let model = resolve_model_alias(&model).to_string();
             eprintln!("Downloading model '{model}'...");
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {e}"))?;
-            let progress_map: models::ProgressMap =
-                Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-            let cancellation_map: models::CancellationMap =
-                Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-
-            let result = rt.block_on(models::download_model(
-                model,
-                progress_map,
-                cancellation_map,
-            ))?;
+            let result = download_model_with_progress(&model)?;
             println!("Downloaded: {} ({})", result.name, format_bytes(result.size_bytes));
             Ok(())
         }
@@ -440,6 +474,62 @@ fn run_config(action: ConfigAction) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn download_model_with_progress(model_name: &str) -> Result<models::DownloadedModel, String> {
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
+    let progress_map: models::ProgressMap =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let cancellation_map: models::CancellationMap =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let pb = ProgressBar::new(0);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%) {bytes_per_sec} ETA {eta}",
+        )
+        .unwrap()
+        .progress_chars("=> "),
+    );
+    pb.set_message(model_name.to_string());
+
+    let poll_map = progress_map.clone();
+    let poll_name = model_name.to_string();
+    let poll_bar = pb.clone();
+    let done = Arc::new(AtomicBool::new(false));
+    let done_flag = done.clone();
+
+    let poll_handle = std::thread::spawn(move || {
+        let poll_rt = tokio::runtime::Runtime::new().unwrap();
+        while !done_flag.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let map = poll_rt.block_on(poll_map.lock());
+            if let Some(progress) = map.get(&poll_name) {
+                if progress.total_bytes > 0 {
+                    poll_bar.set_length(progress.total_bytes);
+                    poll_bar.set_position(progress.downloaded_bytes);
+                }
+                if progress.status == DownloadStatus::Completed
+                    || progress.status == DownloadStatus::Failed
+                    || progress.status == DownloadStatus::Cancelled
+                {
+                    break;
+                }
+            }
+        }
+    });
+
+    let result = rt.block_on(models::download_model(
+        model_name.to_string(),
+        progress_map,
+        cancellation_map,
+    ));
+
+    done.store(true, Ordering::SeqCst);
+    let _ = poll_handle.join();
+    pb.finish_and_clear();
+
+    result
 }
 
 fn copy_to_clipboard(text: &str) -> Result<(), String> {
