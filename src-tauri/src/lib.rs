@@ -286,10 +286,13 @@ async fn transcribe_streaming_chunk(
     audio_state: tauri::State<'_, AudioState>,
     service_state: tauri::State<'_, TranscriptionServiceState>,
 ) -> Result<TranscriptionResult, String> {
+    // Clone the Arcs out of State immediately to avoid lifetime issues with async.
+    let audio_arc = audio_state.inner().clone();
+    let service_arc = service_state.inner().clone();
+
     // Snapshot the current recording buffer without stopping the recording.
     let audio_data = {
-        let arc = (*audio_state).clone();
-        let state = arc
+        let state = audio_arc
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
         let recording = state
@@ -312,8 +315,7 @@ async fn transcribe_streaming_chunk(
     }
 
     let service = {
-        let arc = (*service_state).clone();
-        let state = arc
+        let state = service_arc
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
         state
