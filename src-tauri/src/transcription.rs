@@ -208,8 +208,8 @@ impl TranscriptionService {
             // Apply gain normalization to the segment
             let mut normalized = normalize_gain(&speech.audio);
 
-            // Whisper requires at least 1s of audio; pad with silence if needed
-            let min_samples = sample_rate as usize; // 16000 samples = 1s
+            // Whisper requires at least 1s of audio; pad to 1.5s for framing headroom
+            let min_samples = (sample_rate * 1.5) as usize; // 24000 samples = 1.5s
             if normalized.len() < min_samples {
                 normalized.resize(min_samples, 0.0);
             }
