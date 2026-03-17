@@ -9,6 +9,7 @@ use outspoken_lib::audio;
 use outspoken_lib::models;
 use outspoken_lib::models::DownloadStatus;
 use outspoken_lib::transcription::{TranscriptionConfig, TranscriptionService};
+use outspoken_lib::text_processing;
 use outspoken_lib::vad::VadSegmenter;
 
 #[derive(Parser)]
@@ -23,7 +24,7 @@ enum Commands {
     /// Record from mic, transcribe, print to stdout, exit
     Dictate {
         /// Model to use (auto-downloads if missing)
-        #[arg(long, default_value = "large-v3-turbo-q5_0")]
+        #[arg(long, default_value = "large-v3-turbo")]
         model: String,
 
         /// Also copy result to clipboard
@@ -54,7 +55,7 @@ enum Commands {
     /// Continuous mode - transcribe each utterance as a new line
     Listen {
         /// Model to use (auto-downloads if missing)
-        #[arg(long, default_value = "large-v3-turbo-q5_0")]
+        #[arg(long, default_value = "large-v3-turbo")]
         model: String,
 
         /// Also copy result to clipboard
@@ -287,12 +288,16 @@ fn run_dictate(
     }
 
     eprintln!("Transcribing...");
-    let result = if no_vad {
+    let mut result = if no_vad {
         service.transcribe(&buffer)?
     } else {
         let mut vad = VadSegmenter::new()?;
         service.transcribe_with_vad(&buffer, &mut vad)?
     };
+
+    // Apply post-processing: self-correction removal, filler removal, dictionary
+    let dictionary = text_processing::list_entries().unwrap_or_default();
+    result.text = text_processing::process_text(&result.text, true, true, &dictionary);
 
     if json {
         let output = serde_json::json!({
@@ -412,7 +417,7 @@ fn run_listen(
             continue;
         }
 
-        let result = if no_vad {
+        let mut result = if no_vad {
             service.transcribe(&buffer)?
         } else {
             let mut vad = VadSegmenter::new()?;
@@ -421,6 +426,10 @@ fn run_listen(
         if result.text.trim().is_empty() {
             continue;
         }
+
+        // Apply post-processing: self-correction removal, filler removal, dictionary
+        let dictionary = text_processing::list_entries().unwrap_or_default();
+        result.text = text_processing::process_text(&result.text, true, true, &dictionary);
 
         if json {
             let output = serde_json::json!({
