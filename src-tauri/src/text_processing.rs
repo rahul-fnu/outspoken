@@ -218,6 +218,11 @@ pub fn remove_self_corrections(text: &str) -> String {
     }
 
     let result = result.trim().to_string();
+    // Strip leading punctuation/whitespace left over from sentence removal
+    let result = result.trim_start_matches(|c: char| c == '.' || c == ',' || c == '!' || c == '?' || c == ';' || c.is_whitespace()).to_string();
+    if result.is_empty() {
+        return result;
+    }
     capitalize_first(&result)
 }
 
