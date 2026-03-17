@@ -15,6 +15,7 @@ pub mod models;
 pub mod settings;
 #[cfg(feature = "desktop")]
 mod text_insert;
+pub mod text_injector;
 pub mod text_processing;
 pub mod transcription;
 #[cfg(feature = "desktop")]
