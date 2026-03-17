@@ -206,7 +206,13 @@ impl TranscriptionService {
 
         for speech in &speech_segments {
             // Apply gain normalization to the segment
-            let normalized = normalize_gain(&speech.audio);
+            let mut normalized = normalize_gain(&speech.audio);
+
+            // Whisper requires at least 1s of audio; pad with silence if needed
+            let min_samples = sample_rate as usize; // 16000 samples = 1s
+            if normalized.len() < min_samples {
+                normalized.resize(min_samples, 0.0);
+            }
 
             // Transcribe the normalized segment
             let seg_result = self.transcribe(&normalized)?;
