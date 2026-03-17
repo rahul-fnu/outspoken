@@ -135,11 +135,21 @@ pub fn remove_self_corrections(text: &str) -> String {
 
         for trigger in TRIGGERS {
             if let Some(pos) = find_word_bounded_from(&lower, trigger.phrase, search_from) {
-                let dominated = match best_pos {
-                    None => false,
-                    Some(bp) => pos > bp || (pos == bp && trigger.phrase.len() <= best_len),
+                let is_better = match best_pos {
+                    None => true,
+                    Some(bp) => {
+                        if pos < bp {
+                            true // earlier position wins
+                        } else if pos == bp {
+                            trigger.phrase.len() > best_len // same pos: longer phrase wins
+                        } else {
+                            // Later position: only wins if it's strong and within
+                            // same correction clause (~50 chars) as a weak best
+                            trigger.strong && !best_strong && pos < bp + 50
+                        }
+                    }
                 };
-                if !dominated {
+                if is_better {
                     best_pos = Some(pos);
                     best_len = trigger.phrase.len();
                     best_strong = trigger.strong;
@@ -208,6 +218,11 @@ pub fn remove_self_corrections(text: &str) -> String {
     }
 
     let result = result.trim().to_string();
+    // Strip leading punctuation/whitespace left over from sentence removal
+    let result = result.trim_start_matches(|c: char| c == '.' || c == ',' || c == '!' || c == '?' || c == ';' || c.is_whitespace()).to_string();
+    if result.is_empty() {
+        return result;
+    }
     capitalize_first(&result)
 }
 
@@ -608,5 +623,13 @@ mod tests {
     fn test_self_correction_acceptance_actually_no() {
         let result = remove_self_corrections("I want to build a new app actually no I need Claude");
         assert_eq!(result, "I need Claude");
+    }
+
+    #[test]
+    fn test_self_correction_actually_scratch_that() {
+        let result = remove_self_corrections(
+            "I'm not sure what to do. Actually, scratch that. I am sure what to do. Thank you.",
+        );
+        assert_eq!(result, "I am sure what to do. Thank you.");
     }
 }
