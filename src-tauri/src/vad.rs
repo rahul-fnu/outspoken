@@ -101,16 +101,17 @@ impl VadSegmenter {
         let noise_floor = sorted_energies[sorted_energies.len() / 10]; // 10th percentile
         let adaptive_threshold = self.threshold_db.max(noise_floor + 10.0);
 
-        // Label each frame as speech only when ALL conditions are met:
-        // 1. Energy above adaptive threshold
-        // 2. ZCR in speech range
-        // 3. Spectral flux above threshold
+        // Label each frame as speech when energy is above threshold and at least
+        // one secondary indicator (ZCR or spectral flux) supports it. Requiring
+        // all three was too aggressive for some microphones (e.g. webcam mics).
         let is_speech: Vec<bool> = (0..num_frames)
             .map(|i| {
-                frame_energies[i] > adaptive_threshold
-                    && frame_zcr[i] >= ZCR_MIN
-                    && frame_zcr[i] <= ZCR_MAX
-                    && spectral_flux[i] > SPECTRAL_FLUX_THRESHOLD
+                if frame_energies[i] <= adaptive_threshold {
+                    return false;
+                }
+                let zcr_ok = frame_zcr[i] >= ZCR_MIN && frame_zcr[i] <= ZCR_MAX;
+                let flux_ok = spectral_flux[i] > SPECTRAL_FLUX_THRESHOLD;
+                zcr_ok || flux_ok
             })
             .collect();
 
