@@ -33,6 +33,7 @@ rand = "0.8"
 base64 = "0.22"
 arboard = "3"
 clap = { version = "4", features = ["derive"] }
+ctrlc = "3"
 
 [features]
 default = []
