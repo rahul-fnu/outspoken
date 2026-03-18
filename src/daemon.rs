@@ -114,8 +114,10 @@ impl Daemon {
 
                     match result {
                         Ok(mut tr) => {
+                            // Apply dictionary replacements but skip self-correction removal
+                            // Self-correction is too aggressive for short press-to-talk clips
                             let dictionary = text_processing::list_entries().unwrap_or_default();
-                            tr.text = text_processing::process_text(&tr.text, true, true, &dictionary);
+                            tr.text = text_processing::process_text(&tr.text, false, true, &dictionary);
 
                             if !tr.text.is_empty() {
                                 eprintln!("Injecting: {}", tr.text);
