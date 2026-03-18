@@ -1,2 +1,0 @@
-[env]
-PKG_CONFIG_PATH = { value = "/tmp/pkgconfig", force = false }
