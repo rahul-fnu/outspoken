@@ -52,6 +52,9 @@ clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
 openssl = { version = "0.10", features = ["vendored"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+
 [features]
 default = ["desktop"]
 desktop = ["tauri", "tauri-plugin-opener", "tauri-plugin-global-shortcut", "tauri-plugin-autostart", "enigo", "tauri-build"]
