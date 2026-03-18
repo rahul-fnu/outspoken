@@ -54,29 +54,40 @@ impl MacTextInjector {
 #[cfg(target_os = "macos")]
 impl TextInjector for MacTextInjector {
     fn inject_text(&self, text: &str) -> Result<()> {
+        use arboard::Clipboard;
         use core_graphics::event::{CGEvent, CGEventFlags};
         use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
+        // Save current clipboard, paste our text, restore clipboard
+        let mut clipboard = Clipboard::new()
+            .map_err(|e| -> Box<dyn std::error::Error> { format!("Clipboard error: {e}").into() })?;
+        let old_clipboard = clipboard.get_text().ok();
+
+        clipboard.set_text(text.to_string())
+            .map_err(|e| -> Box<dyn std::error::Error> { format!("Clipboard error: {e}").into() })?;
+
+        // Small delay to ensure clipboard is ready
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Simulate Cmd+V paste
         let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
             .map_err(|_| -> Box<dyn std::error::Error> { "Failed to create event source".into() })?;
 
-        // Inject in chunks to avoid dropped characters
-        // CGEvent::set_string handles Unicode properly
-        for ch in text.chars() {
-            let event = CGEvent::new_keyboard_event(source.clone(), 0, true)
-                .map_err(|_| -> Box<dyn std::error::Error> { "Failed to create keyboard event".into() })?;
+        // keycode 9 = V
+        let key_down = CGEvent::new_keyboard_event(source.clone(), 9, true)
+            .map_err(|_| -> Box<dyn std::error::Error> { "Failed to create key event".into() })?;
+        key_down.set_flags(CGEventFlags::CGEventFlagCommand);
+        key_down.post(core_graphics::event::CGEventTapLocation::HID);
 
-            event.set_string(&ch.to_string());
-            event.set_flags(CGEventFlags::empty());
-            event.post(core_graphics::event::CGEventTapLocation::HID);
+        let key_up = CGEvent::new_keyboard_event(source.clone(), 9, false)
+            .map_err(|_| -> Box<dyn std::error::Error> { "Failed to create key event".into() })?;
+        key_up.set_flags(CGEventFlags::CGEventFlagCommand);
+        key_up.post(core_graphics::event::CGEventTapLocation::HID);
 
-            // Key up
-            let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
-                .map_err(|_| -> Box<dyn std::error::Error> { "Failed to create key up event".into() })?;
-            up.set_flags(CGEventFlags::empty());
-            up.post(core_graphics::event::CGEventTapLocation::HID);
-
-            std::thread::sleep(std::time::Duration::from_millis(2));
+        // Wait for paste to complete, then restore old clipboard
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Some(old) = old_clipboard {
+            let _ = clipboard.set_text(old);
         }
 
         Ok(())
