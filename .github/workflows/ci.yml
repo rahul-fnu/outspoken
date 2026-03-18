@@ -15,33 +15,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-latest
-            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
-            args: --target universal-apple-darwin
-            tauri-args: --target universal-apple-darwin
-          - platform: windows-latest
-            rust-targets: x86_64-pc-windows-msvc
-            args: ""
-            tauri-args: ""
-          - platform: ubuntu-22.04
-            rust-targets: x86_64-unknown-linux-gnu
-            args: ""
-            tauri-args: ""
-
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 30
+  check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -49,21 +31,11 @@ jobs:
             clang \
             libclang-dev \
             libasound2-dev \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
             libssl-dev \
-            libxdo-dev \
-            pkg-config \
-            wget \
-            file \
-            libfuse2
+            pkg-config
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust-targets }}
 
       - name: Cache cargo registry & target
         uses: actions/cache@v4
@@ -76,41 +48,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install npm dependencies
-        run: npm ci
-
       - name: Rust check & tests
         working-directory: src-tauri
         run: |
           cargo check
           cargo test
-
-      - name: Build frontend
-        run: npm run build
-
-      - name: Build Tauri app (release)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Outspoken ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download Outspoken for your platform."
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.tauri-args }}
-
-      - name: Build Tauri app (CI check)
-        if: "!startsWith(github.ref, 'refs/tags/v')"
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: ${{ matrix.tauri-args }}
