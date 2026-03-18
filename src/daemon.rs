@@ -51,13 +51,16 @@ impl Daemon {
                 break;
             }
 
-            // Block until hotkey or channel close
-            if self.hotkey_rx.recv().is_err() {
-                break;
-            }
-
-            if self.shutdown.load(Ordering::SeqCst) {
-                break;
+            // Poll for hotkey with timeout so we can check shutdown
+            loop {
+                if self.shutdown.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                match self.hotkey_rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                    Ok(()) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                }
             }
 
             match state {
