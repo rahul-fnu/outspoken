@@ -19,7 +19,7 @@ mod macos {
     use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
     use std::time::Duration;
 
-    const OPTION_D_KEYCODE: i64 = 2;
+    const D_KEYCODE: i64 = 2;
 
     pub struct MacHotkeyListener {
         callback: Arc<Mutex<Box<dyn Fn() + Send>>>,
@@ -50,13 +50,14 @@ mod macos {
                     move |_proxy, _event_type, event: &CGEvent| {
                         let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
                         let flags = event.get_flags();
-                        if keycode == OPTION_D_KEYCODE
-                            && flags.contains(CGEventFlags::CGEventFlagAlternate)
+                        if keycode == D_KEYCODE
+                            && flags.contains(CGEventFlags::CGEventFlagShift)
+                            && flags.contains(CGEventFlags::CGEventFlagCommand)
                         {
                             if let Ok(cb) = callback.lock() {
                                 cb();
                             }
-                            // Swallow the event so ∂ is not typed
+                            // Swallow the event
                             return None;
                         }
                         // Pass all other events through
