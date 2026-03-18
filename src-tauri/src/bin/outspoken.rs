@@ -95,6 +95,15 @@ enum Commands {
         action: McpAction,
     },
 
+    /// Install LaunchAgent for auto-start on login (macOS only)
+    Install,
+
+    /// Uninstall LaunchAgent (macOS only)
+    Uninstall,
+
+    /// Show daemon status (macOS only)
+    Status,
+
     /// Print version information
     Version,
 }
@@ -166,6 +175,24 @@ fn main() {
                 }
             }
         },
+        Commands::Install => {
+            if let Err(e) = launchagent_install() {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Uninstall => {
+            if let Err(e) = launchagent_uninstall() {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Status => {
+            if let Err(e) = launchagent_status() {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
         Commands::Version => {
             println!("outspoken {}", env!("CARGO_PKG_VERSION"));
         }
@@ -562,6 +589,141 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+const PLIST_LABEL: &str = "com.rahul-fnu.outspoken";
+const PLIST_FILENAME: &str = "com.rahul-fnu.outspoken.plist";
+
+const PLIST_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rahul-fnu.outspoken</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BINARY_PATH__</string>
+        <string>listen</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
+"#;
+
+fn generate_plist(binary_path: &str) -> String {
+    PLIST_TEMPLATE.replace("__BINARY_PATH__", binary_path)
+}
+
+fn plist_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
+    Ok(home.join("Library").join("LaunchAgents").join(PLIST_FILENAME))
+}
+
+#[cfg(target_os = "macos")]
+fn launchagent_install() -> Result<(), String> {
+    let binary_path = std::env::current_exe()
+        .map_err(|e| format!("Could not determine binary path: {e}"))?;
+    let binary_str = binary_path.to_str().ok_or("Binary path is not valid UTF-8")?;
+    let plist_content = generate_plist(binary_str);
+    let plist = plist_path()?;
+
+    let parent = plist.parent().ok_or("Invalid plist path")?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("Failed to create LaunchAgents directory: {e}"))?;
+
+    std::fs::write(&plist, &plist_content)
+        .map_err(|e| format!("Failed to write plist: {e}"))?;
+    println!("Wrote {}", plist.display());
+
+    let output = std::process::Command::new("launchctl")
+        .args(["load", plist.to_str().unwrap()])
+        .output()
+        .map_err(|e| format!("Failed to run launchctl load: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("launchctl load failed: {stderr}"));
+    }
+
+    println!("LaunchAgent loaded.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launchagent_install() -> Result<(), String> {
+    println!("LaunchAgent is macOS-only");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launchagent_uninstall() -> Result<(), String> {
+    let plist = plist_path()?;
+
+    if plist.exists() {
+        let output = std::process::Command::new("launchctl")
+            .args(["unload", plist.to_str().unwrap()])
+            .output()
+            .map_err(|e| format!("Failed to run launchctl unload: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("Warning: launchctl unload: {stderr}");
+        } else {
+            println!("LaunchAgent unloaded.");
+        }
+
+        std::fs::remove_file(&plist)
+            .map_err(|e| format!("Failed to remove plist: {e}"))?;
+        println!("Removed {}", plist.display());
+    } else {
+        println!("LaunchAgent plist not found; nothing to uninstall.");
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launchagent_uninstall() -> Result<(), String> {
+    println!("LaunchAgent is macOS-only");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launchagent_status() -> Result<(), String> {
+    let plist = plist_path()?;
+    if !plist.exists() {
+        println!("LaunchAgent: not installed");
+        return Ok(());
+    }
+
+    let output = std::process::Command::new("launchctl")
+        .args(["list"])
+        .output()
+        .map_err(|e| format!("Failed to run launchctl list: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let loaded = parse_launchctl_list(&stdout, PLIST_LABEL);
+
+    if loaded {
+        println!("LaunchAgent: installed and loaded");
+    } else {
+        println!("LaunchAgent: installed but not loaded");
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launchagent_status() -> Result<(), String> {
+    println!("LaunchAgent is macOS-only");
+    Ok(())
+}
+
+fn parse_launchctl_list(output: &str, label: &str) -> bool {
+    output.lines().any(|line| line.contains(label))
+}
+
 fn format_bytes(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
         format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
@@ -569,5 +731,46 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.0} MB", bytes as f64 / 1_000_000.0)
     } else {
         format!("{:.0} KB", bytes as f64 / 1_000.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_plist_valid_xml() {
+        let plist = generate_plist("/usr/local/bin/outspoken");
+        assert!(plist.contains("<?xml version=\"1.0\""));
+        assert!(plist.contains("<!DOCTYPE plist"));
+        assert!(plist.contains("<plist version=\"1.0\">"));
+        assert!(plist.contains("</plist>"));
+        assert!(plist.contains("<string>/usr/local/bin/outspoken</string>"));
+        assert!(plist.contains("<string>com.rahul-fnu.outspoken</string>"));
+        assert!(!plist.contains("__BINARY_PATH__"));
+    }
+
+    #[test]
+    fn test_generate_plist_substitutes_path() {
+        let path = "/Users/test/.cargo/bin/outspoken";
+        let plist = generate_plist(path);
+        assert!(plist.contains(&format!("<string>{}</string>", path)));
+    }
+
+    #[test]
+    fn test_parse_launchctl_list_found() {
+        let output = "-\t0\tcom.apple.something\n123\t0\tcom.rahul-fnu.outspoken\n- \t0\tcom.other\n";
+        assert!(parse_launchctl_list(output, "com.rahul-fnu.outspoken"));
+    }
+
+    #[test]
+    fn test_parse_launchctl_list_not_found() {
+        let output = "- \t0\tcom.apple.something\n- \t0\tcom.other\n";
+        assert!(!parse_launchctl_list(output, "com.rahul-fnu.outspoken"));
+    }
+
+    #[test]
+    fn test_parse_launchctl_list_empty() {
+        assert!(!parse_launchctl_list("", "com.rahul-fnu.outspoken"));
     }
 }

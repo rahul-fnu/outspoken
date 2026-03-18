@@ -42,6 +42,7 @@ use tokio::sync::Mutex;
 use transcription::{SupportedLanguage, TranscriptionConfig, TranscriptionResult, TranscriptionService};
 #[cfg(feature = "desktop")]
 use tauri::Manager;
+#[cfg(feature = "desktop")]
 use tray::{TrayRecordingState, TrayState};
 
 #[cfg(feature = "desktop")]

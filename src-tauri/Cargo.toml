@@ -50,6 +50,7 @@ arboard = "3"
 indicatif = "0.17"
 clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
+openssl = { version = "0.10", features = ["vendored"] }
 
 [features]
 default = ["desktop"]
