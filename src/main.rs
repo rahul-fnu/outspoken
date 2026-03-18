@@ -5,7 +5,7 @@ use std::sync::{Arc, mpsc};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "outspoken", version, about = "AI-powered dictation daemon — press Cmd+Shift+D to dictate")]
+#[command(name = "outspoken", version, about = "AI-powered dictation daemon — press F5 to dictate")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -13,10 +13,10 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum Commands {
-    /// Start the dictation daemon (Cmd+Shift+D to record, Cmd+Shift+D again to transcribe + type)
+    /// Start the dictation daemon (F5 to record, F5 again to transcribe + type)
     Start {
         /// Model to use (auto-downloads if missing)
-        #[arg(long, default_value = "large-v3-turbo")]
+        #[arg(long, default_value = "large-v3")]
         model: String,
     },
     /// Install as a LaunchAgent (auto-start on login)
@@ -68,7 +68,7 @@ fn run_daemon(model_name: &str) -> Result<(), String> {
     })
     .map_err(|e| format!("Failed to set Ctrl+C handler: {e}"))?;
 
-    // Start hotkey listener (Cmd+Shift+D)
+    // Start hotkey listener (F5)
     start_hotkey_listener(hotkey_tx, shutdown.clone())?;
 
     // Create platform components
@@ -76,7 +76,7 @@ fn run_daemon(model_name: &str) -> Result<(), String> {
     let injector = Box::new(outspoken_lib::platform::macos::MacTextInjector::new());
     let indicator = Box::new(outspoken_lib::platform::macos::MacStatusIndicator::new());
 
-    eprintln!("outspoken daemon running. Press Cmd+Shift+D to start dictating. Ctrl+C to quit.");
+    eprintln!("outspoken daemon running. Press F5 to start dictating. Ctrl+C to quit.");
 
     let mut daemon = outspoken_lib::daemon::Daemon::new(
         audio,
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn test_start_command() {
         let cli = Cli::parse_from(["outspoken", "start"]);
-        assert_eq!(cli.command, Commands::Start { model: "large-v3-turbo".to_string() });
+        assert_eq!(cli.command, Commands::Start { model: "large-v3".to_string() });
     }
 
     #[test]

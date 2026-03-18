@@ -19,7 +19,7 @@ mod macos {
     use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
     use std::time::Duration;
 
-    const D_KEYCODE: i64 = 2;
+    const F5_KEYCODE: i64 = 96;
 
     pub struct MacHotkeyListener {
         callback: Arc<Mutex<Box<dyn Fn() + Send>>>,
@@ -50,12 +50,8 @@ mod macos {
                     vec![CGEventType::KeyDown],
                     move |_proxy, _event_type, event: &CGEvent| {
                         let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
-                        let flags = event.get_flags();
-                        let has_cmd = flags.contains(CGEventFlags::CGEventFlagCommand);
-                        let has_shift = flags.contains(CGEventFlags::CGEventFlagShift);
-
-                        if keycode == D_KEYCODE && has_cmd && has_shift {
-                            eprintln!("Hotkey detected! (Cmd+Shift+D)");
+                        if keycode == F5_KEYCODE {
+                            eprintln!("Hotkey detected! (F5)");
                             if let Ok(cb) = callback.lock() {
                                 cb();
                             }
