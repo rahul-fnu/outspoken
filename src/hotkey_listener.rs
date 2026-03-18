@@ -16,7 +16,7 @@ mod macos {
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
         CGEventTapPlacement, CGEventType, EventField,
     };
-    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+    use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
     use std::time::Duration;
 
     const OPTION_D_KEYCODE: i64 = 2;
@@ -88,7 +88,7 @@ mod macos {
                     tap.enable();
 
                     while running.load(Ordering::SeqCst) {
-                        CFRunLoop::run_in_mode(kCFRunLoopCommonModes, Duration::from_millis(500), false);
+                        CFRunLoop::run_in_mode(kCFRunLoopDefaultMode, Duration::from_millis(500), false);
                     }
                 }
             });
