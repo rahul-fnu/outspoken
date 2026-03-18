@@ -288,3 +288,164 @@ pub fn start_capture(
         _stream: stream,
     })
 }
+
+/// Trait abstracting audio capture for the daemon.
+/// Implementations provide 16kHz mono Float32 PCM audio.
+pub trait AudioCapture: Send {
+    fn start(&mut self) -> Result<(), String>;
+    fn stop(&mut self) -> Result<Vec<f32>, String>;
+    fn is_recording(&self) -> bool;
+}
+
+/// Real audio capture using cpal, wrapping the existing `start_capture` function.
+pub struct CpalAudioCapture {
+    device_name: Option<String>,
+    state: Option<RecordingState>,
+}
+
+impl CpalAudioCapture {
+    pub fn new(device_name: Option<String>) -> Self {
+        Self {
+            device_name,
+            state: None,
+        }
+    }
+}
+
+impl AudioCapture for CpalAudioCapture {
+    fn start(&mut self) -> Result<(), String> {
+        if self.state.is_some() {
+            return Err("Already recording".into());
+        }
+        let recording = start_capture(&self.device_name, None)?;
+        self.state = Some(recording);
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<Vec<f32>, String> {
+        let recording = self.state.take().ok_or("Not currently recording")?;
+        recording.is_recording.store(false, Ordering::Relaxed);
+        let buffer = recording
+            .buffer
+            .lock()
+            .map_err(|_| "Failed to lock audio buffer".to_string())?
+            .clone();
+        Ok(buffer)
+    }
+
+    fn is_recording(&self) -> bool {
+        self.state
+            .as_ref()
+            .map(|s| s.is_recording.load(Ordering::Relaxed))
+            .unwrap_or(false)
+    }
+}
+
+/// Mock audio capture that returns a pre-filled sine wave buffer.
+/// Useful for testing the full pipeline on Linux or in CI without a real microphone.
+pub struct MockAudioCapture {
+    recording: bool,
+    duration_secs: f32,
+    frequency_hz: f32,
+}
+
+impl MockAudioCapture {
+    pub fn new(duration_secs: f32, frequency_hz: f32) -> Self {
+        Self {
+            recording: false,
+            duration_secs,
+            frequency_hz,
+        }
+    }
+
+    fn generate_sine_wave(&self) -> Vec<f32> {
+        let num_samples = (TARGET_SAMPLE_RATE as f32 * self.duration_secs) as usize;
+        (0..num_samples)
+            .map(|i| {
+                let t = i as f32 / TARGET_SAMPLE_RATE as f32;
+                (2.0 * std::f32::consts::PI * self.frequency_hz * t).sin()
+            })
+            .collect()
+    }
+}
+
+impl AudioCapture for MockAudioCapture {
+    fn start(&mut self) -> Result<(), String> {
+        if self.recording {
+            return Err("Already recording".into());
+        }
+        self.recording = true;
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<Vec<f32>, String> {
+        if !self.recording {
+            return Err("Not currently recording".into());
+        }
+        self.recording = false;
+        Ok(self.generate_sine_wave())
+    }
+
+    fn is_recording(&self) -> bool {
+        self.recording
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mock_capture_returns_valid_buffer() {
+        let mut capture = MockAudioCapture::new(1.0, 440.0);
+        assert!(!capture.is_recording());
+
+        capture.start().unwrap();
+        assert!(capture.is_recording());
+
+        let buffer = capture.stop().unwrap();
+        assert!(!capture.is_recording());
+
+        // 1 second at 16kHz = 16000 samples
+        assert_eq!(buffer.len(), 16000);
+    }
+
+    #[test]
+    fn mock_capture_buffer_format() {
+        let mut capture = MockAudioCapture::new(0.5, 440.0);
+        capture.start().unwrap();
+        let buffer = capture.stop().unwrap();
+
+        // 0.5 seconds at 16kHz = 8000 samples
+        assert_eq!(buffer.len(), 8000);
+
+        // All samples should be in [-1.0, 1.0] range (valid Float32 PCM)
+        for &sample in &buffer {
+            assert!(sample >= -1.0 && sample <= 1.0, "Sample {sample} out of range");
+        }
+    }
+
+    #[test]
+    fn mock_capture_sine_wave_is_not_silence() {
+        let mut capture = MockAudioCapture::new(0.1, 440.0);
+        capture.start().unwrap();
+        let buffer = capture.stop().unwrap();
+
+        // Should have non-zero samples (not silence)
+        let rms: f32 = (buffer.iter().map(|s| s * s).sum::<f32>() / buffer.len() as f32).sqrt();
+        assert!(rms > 0.3, "RMS {rms} too low — expected audible sine wave");
+    }
+
+    #[test]
+    fn mock_capture_errors_on_double_start() {
+        let mut capture = MockAudioCapture::new(1.0, 440.0);
+        capture.start().unwrap();
+        assert!(capture.start().is_err());
+    }
+
+    #[test]
+    fn mock_capture_errors_on_stop_without_start() {
+        let mut capture = MockAudioCapture::new(1.0, 440.0);
+        assert!(capture.stop().is_err());
+    }
+}
