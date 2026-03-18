@@ -16,10 +16,10 @@ mod macos {
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
         CGEventTapPlacement, CGEventType, EventField,
     };
-    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+    use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
     use std::time::Duration;
 
-    const OPTION_D_KEYCODE: i64 = 2;
+    const F13_KEYCODE: i64 = 105;
 
     pub struct MacHotkeyListener {
         callback: Arc<Mutex<Box<dyn Fn() + Send>>>,
@@ -42,22 +42,24 @@ mod macos {
             let running = self.running.clone();
 
             std::thread::spawn(move || {
+                eprintln!("Starting hotkey listener thread...");
                 let tap = CGEventTap::new(
                     CGEventTapLocation::HID,
                     CGEventTapPlacement::HeadInsertEventTap,
-                    CGEventTapOptions::ListenOnly,
+                    CGEventTapOptions::Default,
                     vec![CGEventType::KeyDown],
                     move |_proxy, _event_type, event: &CGEvent| {
                         let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
-                        let flags = event.get_flags();
-                        if keycode == OPTION_D_KEYCODE
-                            && flags.contains(CGEventFlags::CGEventFlagAlternate)
-                        {
+                        if keycode == F13_KEYCODE {
+                            eprintln!("Hotkey detected! (F13)");
                             if let Ok(cb) = callback.lock() {
                                 cb();
                             }
+                            // Swallow the event
+                            return None;
                         }
-                        None
+                        // Pass all other events through
+                        Some(event.clone())
                     },
                 );
 
@@ -80,6 +82,7 @@ mod macos {
                     }
                 };
 
+                eprintln!("CGEvent tap created successfully. Listening for F13...");
                 unsafe {
                     let loop_source = tap.mach_port.create_runloop_source(0)
                         .expect("Failed to create run loop source");
@@ -88,7 +91,7 @@ mod macos {
                     tap.enable();
 
                     while running.load(Ordering::SeqCst) {
-                        CFRunLoop::run_in_mode(kCFRunLoopCommonModes, Duration::from_millis(500), false);
+                        CFRunLoop::run_in_mode(kCFRunLoopDefaultMode, Duration::from_millis(500), false);
                     }
                 }
             });

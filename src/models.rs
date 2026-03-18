@@ -94,6 +94,13 @@ pub fn available_models() -> Vec<ModelInfo> {
             description: "Large V3 Turbo (~800MB) - Full precision turbo model. CPU: ~5x realtime".into(),
             recommended: false,
         },
+        ModelInfo {
+            name: "large-v3".into(),
+            filename: "ggml-large-v3.bin".into(),
+            size_bytes: 3_100_000_000,
+            description: "Large V3 (~3.1GB) - Most accurate model. 32 decoder layers. CPU: ~20x realtime".into(),
+            recommended: false,
+        },
     ]
 }
 

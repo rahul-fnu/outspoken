@@ -111,6 +111,10 @@ impl TranscriptionService {
         params.set_print_timestamps(false);
         params.set_token_timestamps(true);
 
+        // Keep it simple — let the model do its job
+        params.set_no_speech_thold(0.5);
+        params.set_suppress_non_speech_tokens(true);
+
         state
             .full(params, audio_data)
             .map_err(|e| format!("Transcription failed: {e}"))?;
