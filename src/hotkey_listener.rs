@@ -45,7 +45,7 @@ mod macos {
                 let tap = CGEventTap::new(
                     CGEventTapLocation::HID,
                     CGEventTapPlacement::HeadInsertEventTap,
-                    CGEventTapOptions::ListenOnly,
+                    CGEventTapOptions::Default,
                     vec![CGEventType::KeyDown],
                     move |_proxy, _event_type, event: &CGEvent| {
                         let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
@@ -56,8 +56,11 @@ mod macos {
                             if let Ok(cb) = callback.lock() {
                                 cb();
                             }
+                            // Swallow the event so ∂ is not typed
+                            return None;
                         }
-                        None
+                        // Pass all other events through
+                        Some(event.clone())
                     },
                 );
 
