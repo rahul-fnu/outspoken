@@ -39,3 +39,44 @@ impl StatusIndicator for LinuxStatusIndicator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hotkey_listener_start_stop() {
+        let mut listener = LinuxHotkeyListener;
+        assert!(listener.start(Box::new(|| {})).is_ok());
+        assert!(listener.stop().is_ok());
+    }
+
+    #[test]
+    fn audio_capture_returns_empty_buffer() {
+        let mut capture = LinuxAudioCapture;
+        assert!(capture.start_recording().is_ok());
+        let samples = capture.stop_recording().unwrap();
+        assert!(samples.is_empty());
+    }
+
+    #[test]
+    fn text_injector_succeeds() {
+        let injector = LinuxTextInjector;
+        assert!(injector.inject_text("hello world").is_ok());
+    }
+
+    #[test]
+    fn status_indicator_all_states() {
+        let mut indicator = LinuxStatusIndicator;
+        assert!(indicator.set_state(IndicatorState::Idle).is_ok());
+        assert!(indicator.set_state(IndicatorState::Recording).is_ok());
+        assert!(indicator.set_state(IndicatorState::Processing).is_ok());
+    }
+
+    #[test]
+    fn indicator_state_equality() {
+        assert_eq!(IndicatorState::Idle, IndicatorState::Idle);
+        assert_ne!(IndicatorState::Idle, IndicatorState::Recording);
+        assert_ne!(IndicatorState::Recording, IndicatorState::Processing);
+    }
+}
