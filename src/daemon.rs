@@ -95,22 +95,7 @@ impl Daemon {
                         continue;
                     }
 
-                    // Use VAD to strip silence (prevents Whisper hallucinations
-                    // like "Thank you" on quiet segments)
-                    let result = match VadSegmenter::new() {
-                        Ok(mut vad) => {
-                            match self.transcriber.transcribe_with_vad(&audio_data, &mut vad) {
-                                Ok(r) if r.text.trim().is_empty() => {
-                                    // VAD found no speech — fall back to direct transcription
-                                    // in case VAD is too aggressive for this mic
-                                    eprintln!("VAD found no speech, trying direct transcription...");
-                                    self.transcriber.transcribe(&audio_data)
-                                }
-                                other => other,
-                            }
-                        }
-                        Err(_) => self.transcriber.transcribe(&audio_data),
-                    };
+                    let result = self.transcriber.transcribe(&audio_data);
 
                     match result {
                         Ok(mut tr) => {

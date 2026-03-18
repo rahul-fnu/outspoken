@@ -111,16 +111,8 @@ impl TranscriptionService {
         params.set_print_timestamps(false);
         params.set_token_timestamps(true);
 
-        // Anti-hallucination: set initial prompt to ground the model
-        params.set_initial_prompt("This is a voice dictation transcript. The speaker is dictating text naturally.");
-
-        // Suppress non-speech: if a segment has high no-speech probability, skip it
-        params.set_no_speech_thold(0.6);
-
-        // Limit single-segment hallucinations by setting max segment length
-        params.set_max_len(0); // 0 = no limit on segment length (prevents splitting mid-sentence)
-
-        // Suppress specific hallucinated tokens
+        // Keep it simple — let the model do its job
+        params.set_no_speech_thold(0.5);
         params.set_suppress_non_speech_tokens(true);
 
         state
