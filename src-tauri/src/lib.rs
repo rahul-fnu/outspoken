@@ -5,6 +5,7 @@ pub mod audio;
 #[cfg(feature = "desktop")]
 mod audio_level;
 pub mod audio_preprocess;
+pub mod daemon;
 pub mod db;
 pub mod formatting;
 pub mod history;
