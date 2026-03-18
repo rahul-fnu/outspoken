@@ -2,6 +2,7 @@ pub mod audio;
 pub mod audio_preprocess;
 pub mod daemon;
 pub mod db;
+pub mod hotkey_listener;
 pub mod models;
 pub mod platform;
 pub mod text_processing;
