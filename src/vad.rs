@@ -165,4 +165,54 @@ impl VadSegmenter {
 
         Ok(segments)
     }
+
+    /// Trim leading and trailing silence, returning one contiguous audio chunk.
+    /// Unlike `segment()`, this never splits speech — it just finds where speech
+    /// starts and ends and returns everything in between with padding.
+    pub fn trim_silence(&mut self, audio: &[f32]) -> Result<Vec<f32>, String> {
+        if audio.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let frames: Vec<&[f32]> = audio.chunks(FRAME_SIZE).collect();
+        let num_frames = frames.len();
+
+        // Calculate per-frame energy in dB
+        let frame_energies: Vec<f32> = frames
+            .iter()
+            .map(|frame| {
+                let rms = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
+                if rms > 0.0 {
+                    20.0 * rms.log10()
+                } else {
+                    -80.0
+                }
+            })
+            .collect();
+
+        // Adaptive threshold
+        let sorted_energies = {
+            let mut e = frame_energies.clone();
+            e.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            e
+        };
+        let noise_floor = sorted_energies[sorted_energies.len() / 10];
+        let adaptive_threshold = self.threshold_db.max(noise_floor + 10.0);
+
+        // Find first and last frame above threshold (energy-only, no ZCR/flux)
+        let first_speech = frame_energies.iter().position(|&e| e > adaptive_threshold);
+        let last_speech = frame_energies.iter().rposition(|&e| e > adaptive_threshold);
+
+        match (first_speech, last_speech) {
+            (Some(first), Some(last)) => {
+                let start_sample = (first * FRAME_SIZE).saturating_sub(PADDING_SAMPLES);
+                let end_sample = (((last + 1) * FRAME_SIZE) + PADDING_SAMPLES).min(audio.len());
+                Ok(audio[start_sample..end_sample].to_vec())
+            }
+            _ => {
+                // No speech found — return original audio and let Whisper decide
+                Ok(audio.to_vec())
+            }
+        }
+    }
 }

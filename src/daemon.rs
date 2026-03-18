@@ -95,7 +95,14 @@ impl Daemon {
                         continue;
                     }
 
-                    let result = self.transcriber.transcribe(&audio_data);
+                    // Trim leading/trailing silence to prevent hallucinations,
+                    // but keep all speech as one chunk for full context
+                    let trimmed = match VadSegmenter::new() {
+                        Ok(mut vad) => vad.trim_silence(&audio_data).unwrap_or(audio_data),
+                        Err(_) => audio_data,
+                    };
+
+                    let result = self.transcriber.transcribe(&trimmed);
 
                     match result {
                         Ok(mut tr) => {
