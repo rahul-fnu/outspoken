@@ -58,10 +58,8 @@ impl TextInjector for MacTextInjector {
         use core_graphics::event::{CGEvent, CGEventFlags};
         use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
-        // Save current clipboard, paste our text, restore clipboard
         let mut clipboard = Clipboard::new()
             .map_err(|e| -> Box<dyn std::error::Error> { format!("Clipboard error: {e}").into() })?;
-        let old_clipboard = clipboard.get_text().ok();
 
         clipboard.set_text(text.to_string())
             .map_err(|e| -> Box<dyn std::error::Error> { format!("Clipboard error: {e}").into() })?;
@@ -83,12 +81,6 @@ impl TextInjector for MacTextInjector {
             .map_err(|_| -> Box<dyn std::error::Error> { "Failed to create key event".into() })?;
         key_up.set_flags(CGEventFlags::CGEventFlagCommand);
         key_up.post(core_graphics::event::CGEventTapLocation::HID);
-
-        // Wait for paste to complete, then restore old clipboard
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if let Some(old) = old_clipboard {
-            let _ = clipboard.set_text(old);
-        }
 
         Ok(())
     }

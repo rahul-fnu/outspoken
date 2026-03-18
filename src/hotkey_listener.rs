@@ -82,7 +82,7 @@ mod macos {
                     }
                 };
 
-                eprintln!("CGEvent tap created successfully. Listening for Cmd+Shift+D...");
+                eprintln!("CGEvent tap created successfully. Listening for F13...");
                 unsafe {
                     let loop_source = tap.mach_port.create_runloop_source(0)
                         .expect("Failed to create run loop source");
