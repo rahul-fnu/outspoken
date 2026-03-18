@@ -92,11 +92,8 @@ impl Daemon {
                         continue;
                     }
 
-                    // Transcribe with VAD
-                    let result = match VadSegmenter::new() {
-                        Ok(mut vad) => self.transcriber.transcribe_with_vad(&audio_data, &mut vad),
-                        Err(_) => self.transcriber.transcribe(&audio_data),
-                    };
+                    // Transcribe directly (VAD can over-filter on some mics)
+                    let result = self.transcriber.transcribe(&audio_data);
 
                     match result {
                         Ok(mut tr) => {
