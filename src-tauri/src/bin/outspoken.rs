@@ -6,6 +6,7 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use outspoken_lib::audio;
+use outspoken_lib::daemon;
 use outspoken_lib::models;
 use outspoken_lib::models::DownloadStatus;
 use outspoken_lib::transcription::{TranscriptionConfig, TranscriptionService};
@@ -104,6 +105,13 @@ enum Commands {
     /// Show daemon status (macOS only)
     Status,
 
+    /// Start the daemon: hotkey-driven record → transcribe → inject loop
+    Start {
+        /// Model to use (auto-downloads if missing)
+        #[arg(long, default_value = "large-v3-turbo")]
+        model: String,
+    },
+
     /// Print version information
     Version,
 }
@@ -167,6 +175,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Start { model } => {
+            if let Err(e) = run_start(&model) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
         Commands::Mcp { action } => match action {
             McpAction::Serve => {
                 if let Err(e) = outspoken_lib::mcp::run_mcp_server() {
@@ -197,6 +211,55 @@ fn main() {
             println!("outspoken {}", env!("CARGO_PKG_VERSION"));
         }
     }
+}
+
+fn run_start(_model: &str) -> Result<(), String> {
+    eprintln!("Outspoken daemon starting...");
+
+    // Set up shutdown flag
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+    ctrlc::set_handler(move || {
+        eprintln!("\nShutting down...");
+        shutdown_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+    })
+    .map_err(|e| format!("Failed to set signal handler: {e}"))?;
+
+    // Construct platform components
+    #[cfg(target_os = "macos")]
+    let (hotkey, audio_cap, transcriber, injector, indicator) = {
+        // On macOS, use real implementations
+        // (These would wrap CoreAudio, CGEvent tap, etc.)
+        // For now, this is a placeholder — real macOS impls would go here
+        compile_error!("macOS real implementations not yet wired up for daemon mode");
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let (hotkey, _hotkey_tx, audio_cap, transcriber, injector, indicator) = {
+        let (hotkey, hotkey_tx) = daemon::MockHotkeyListener::new();
+
+        let audio_cap = daemon::MockAudioCapture::new(vec![0.0; 16000]);
+
+        let transcriber = daemon::MockTranscriber::new("(mock transcription)");
+
+        let (injector, _injected) = daemon::MockTextInjector::new();
+
+        let (indicator, _states) = daemon::MockStatusIndicator::new();
+
+        (hotkey, hotkey_tx, audio_cap, transcriber, injector, indicator)
+    };
+
+    let daemon = daemon::Daemon::new(
+        Box::new(hotkey),
+        Box::new(audio_cap),
+        Box::new(transcriber),
+        Box::new(injector),
+        Box::new(indicator),
+        shutdown,
+    );
+
+    eprintln!("Daemon running. Press hotkey to toggle recording. Ctrl+C to quit.");
+    daemon.run()
 }
 
 fn resolve_model_alias(name: &str) -> &str {

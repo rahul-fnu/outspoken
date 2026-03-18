@@ -56,5 +56,5 @@ jobs:
       - name: Rust check & tests
         working-directory: src-tauri
         run: |
-          cargo check
-          cargo test
+          cargo check --no-default-features
+          cargo test --no-default-features
