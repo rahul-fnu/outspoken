@@ -42,6 +42,7 @@ mod macos {
             let running = self.running.clone();
 
             std::thread::spawn(move || {
+                eprintln!("Starting hotkey listener thread...");
                 let tap = CGEventTap::new(
                     CGEventTapLocation::HID,
                     CGEventTapPlacement::HeadInsertEventTap,
@@ -50,10 +51,11 @@ mod macos {
                     move |_proxy, _event_type, event: &CGEvent| {
                         let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
                         let flags = event.get_flags();
-                        if keycode == D_KEYCODE
-                            && flags.contains(CGEventFlags::CGEventFlagShift)
-                            && flags.contains(CGEventFlags::CGEventFlagCommand)
-                        {
+                        let has_cmd = flags.contains(CGEventFlags::CGEventFlagCommand);
+                        let has_shift = flags.contains(CGEventFlags::CGEventFlagShift);
+
+                        if keycode == D_KEYCODE && has_cmd && has_shift {
+                            eprintln!("Hotkey detected! (Cmd+Shift+D)");
                             if let Ok(cb) = callback.lock() {
                                 cb();
                             }
@@ -84,6 +86,7 @@ mod macos {
                     }
                 };
 
+                eprintln!("CGEvent tap created successfully. Listening for Cmd+Shift+D...");
                 unsafe {
                     let loop_source = tap.mach_port.create_runloop_source(0)
                         .expect("Failed to create run loop source");
